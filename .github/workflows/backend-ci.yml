@@ -1,0 +1,73 @@
+name: backend-ci
+
+on:
+  pull_request:
+    branches: [main, testing]
+    paths: ['backend/**', '.github/workflows/backend-ci.yml']
+  push:
+    branches: [main, testing]
+    paths: ['backend/**', '.github/workflows/backend-ci.yml']
+
+jobs:
+  backend-ci:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: restaurant
+          POSTGRES_PASSWORD: restaurant
+          POSTGRES_DB: restaurant_db
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U restaurant"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://restaurant:restaurant@localhost:5432/restaurant_db?schema=public
+      JWT_SECRET: ci-secret
+      PAYMENT_ENCRYPTION_KEY: ci-payment-key
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Apply migrations & seed (kiểm tra migration chạy được)
+        run: |
+          npx prisma migrate deploy
+          npx prisma db seed
+
+      - name: Smoke test (khởi động server và đăng nhập bằng tài khoản seed)
+        run: |
+          PORT=3000 node dist/main &
+          for i in $(seq 1 30); do
+            curl -sf -X POST http://localhost:3000/api/auth/login \
+              -H 'Content-Type: application/json' \
+              -d '{"identifier":"admin@restaurant.local","password":"Password@123"}' \
+              | grep -q accessToken && echo "Server OK" && exit 0
+            sleep 1
+          done
+          echo "Server không khởi động được" && exit 1
