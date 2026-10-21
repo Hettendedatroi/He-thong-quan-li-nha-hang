@@ -5,11 +5,14 @@ import { JwtModule } from '@nestjs/jwt';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AuthModule } from './auth/auth.module';
+import { BillingModule } from './billing/billing.module';
 import { BranchesModule } from './branches/branches.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { AuthGuard } from './common/guards/auth.guard';
 import { PermissionsGuard } from './common/guards/permissions.guard';
 import { CoreModule } from './core/core.module';
+import { CustomersModule } from './customers/customers.module';
+import { FeedbackModule } from './feedback/feedback.module';
 import { MenuModule } from './menu/menu.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { OrdersModule } from './orders/orders.module';
@@ -52,6 +55,9 @@ import { UsersModule } from './users/users.module';
     ReservationsModule,
     OrdersModule,
     ServiceRequestsModule,
+    BillingModule,
+    FeedbackModule,
+    CustomersModule,
     UploadsModule,
   ],
   providers: [
