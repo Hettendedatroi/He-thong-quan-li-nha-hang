@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bep Nha | Quan ly nha hang</title>
+    <link rel="stylesheet" href="css/restaurant.css" />
+  </head>
+  <body class="dashboard-body">
+    <aside class="app-sidebar">
+      <a class="brand" href="admin-dashboard.html"
+        ><span class="brand-mark">BN</span
+        ><span><b>BEP NHA</b><small>Quan ly nha hang</small></span></a
+      >
+      <div class="sidebar-label">Tong quan</div>
+      <nav class="app-nav">
+        <a class="active" href="admin-dashboard.html"
+          ><span>◈</span> Tong quan</a
+        ><a href="reservations.html"><span>▣</span> Dat ban</a
+        ><a href="orders.html"><span>◉</span> Don hang</a
+        ><a href="menu.html"><span>◌</span> Thuc don</a
+        ><a href="customers.html"><span>♧</span> Khach hang</a>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="staff-avatar">MA</div>
+        <div><b>PO Thành</b><small>Quan ly ca toi</small></div>
+        <button aria-label="Them lua chon">⋯</button>
+      </div>
+    </aside>
+    <main class="app-main">
+      <header class="app-topbar">
+        <div>
+          <span class="eyebrow">Thu tu, 24 thang 10, 2024</span>
+          <h1>Chao buoi toi, PO Thành <span class="wave">✦</span></h1>
+        </div>
+        <div class="top-actions">
+          <button class="icon-button">⌕</button
+          ><button class="icon-button notification">♢<i></i></button>
+          <div class="staff-avatar">MA</div>
+        </div>
+      </header>
+      <section class="dashboard-content">
+        <div class="dashboard-title">
+          <div>
+            <h2>Tong quan hom nay</h2>
+            <p class="muted">Theo doi nhung gi dang dien ra tai Bep Nha.</p>
+          </div>
+          <button class="button primary" data-open-modal>+ Dat ban moi</button>
+        </div>
+        <div class="metric-grid">
+          <article class="metric-card accent">
+            <span>Doanh thu hom nay <b>↗ 12.8%</b></span
+            ><strong>24.680.000 <small>đ</small></strong>
+            <div class="sparkline">
+              <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+            </div>
+          </article>
+          <article class="metric-card">
+            <span>Dat ban hom nay <b>↗ 8.4%</b></span
+            ><strong>38 <small>ban</small></strong>
+            <p class="metric-note">26 ban da check-in</p>
+          </article>
+          <article class="metric-card">
+            <span>Khach dang phuc vu</span
+            ><strong>72 <small>nguoi</small></strong>
+            <p class="metric-note"><mark>18 ban</mark> dang hoat dong</p>
+          </article>
+          <article class="metric-card">
+            <span>Don cho xu ly</span><strong>06 <small>don</small></strong>
+            <p class="metric-note"><mark class="orange">Bep dang dong</mark></p>
+          </article>
+        </div>
+        <div class="dashboard-grid">
+          <section class="panel occupancy-panel">
+            <div class="panel-heading">
+              <div>
+                <span class="eyebrow">Live floor plan</span>
+                <h3>Tinh trang ban</h3>
+              </div>
+              <span class="live"><i></i> Cap nhat truc tiep</span>
+            </div>
+            <div class="floor-legend">
+              <span><i class="available"></i> Trong (8)</span
+              ><span><i class="occupied"></i> Dang dung (10)</span
+              ><span><i class="reserved"></i> Da dat (6)</span>
+            </div>
+            <div class="floor-plan">
+              <div class="floor-zone zone-a">
+                San vuon
+                <div class="tables">
+                  <button class="table available" data-table="A01">A01</button
+                  ><button class="table occupied" data-table="A02">A02</button
+                  ><button class="table available" data-table="A03">A03</button
+                  ><button class="table reserved" data-table="A04">A04</button>
+                </div>
+              </div>
+              <div class="floor-zone zone-b">
+                Trong nha
+                <div class="tables">
+                  <button class="table occupied" data-table="B01">B01</button
+                  ><button class="table occupied" data-table="B02">B02</button
+                  ><button class="table reserved" data-table="B03">B03</button
+                  ><button class="table available" data-table="B04">B04</button
+                  ><button class="table available" data-table="B05">B05</button
+                  ><button class="table occupied" data-table="B06">B06</button>
+                </div>
+              </div>
+              <div class="floor-zone zone-c">
+                Phong rieng
+                <div class="tables">
+                  <button class="table reserved" data-table="C01">C01</button
+                  ><button class="table available" data-table="C02">C02</button>
+                </div>
+              </div>
+            </div>
+            <p class="table-help" id="table-help">
+              Chon mot ban de xem chi tiet
+            </p>
+          </section>
+          <section class="panel reservation-panel">
+            <div class="panel-heading">
+              <div>
+                <span class="eyebrow">Lich hom nay</span>
+                <h3>Dat ban sap toi</h3>
+              </div>
+              <a href="reservations.html">Xem tat ca →</a>
+            </div>
+            <div class="reservation-list">
+              <div class="reservation-row">
+                <time>18:00<small>Toi nay</small></time>
+                <div class="guest-avatar green">LN</div>
+                <div><b>TRUNG SƠN</b><span>4 khach · Ban A04</span></div>
+                <strong class="status confirmed">Da xac nhan</strong>
+              </div>
+              <div class="reservation-row">
+                <time>18:30<small>Toi nay</small></time>
+                <div class="guest-avatar yellow">TT</div>
+                <div><b>DÂNG QUANG HƯNG</b><span>2 khach · Ban B03</span></div>
+                <strong class="status waiting">Cho xac nhan</strong>
+              </div>
+              <div class="reservation-row">
+                <time>19:00<small>Toi nay</small></time>
+                <div class="guest-avatar purple">HN</div>
+                <div><b>Hùng</b><span>6 khach · Phong C01</span></div>
+                <strong class="status confirmed">Da xac nhan</strong>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+    <div class="modal" id="booking-modal">
+      <div class="modal-card">
+        <button class="modal-close" data-close-modal>×</button
+        ><span class="eyebrow">Dat ban nhanh</span>
+        <h2>Them lich dat ban</h2>
+        <form id="quick-booking">
+          <label
+            >Ten khach<input name="name" required placeholder="Ten khach hang"
+          /></label>
+          <div class="field-grid">
+            <label
+              >Gio<select>
+                <option>18:00</option>
+                <option>18:30</option>
+                <option>19:00</option>
+              </select></label
+            ><label
+              >So khach<input type="number" value="2" min="1" max="20"
+            /></label>
+          </div>
+          <label
+            >Ban<select>
+              <option>A01 - San vuon</option>
+              <option>B04 - Trong nha</option>
+              <option>C02 - Phong rieng</option>
+            </select></label
+          ><button class="button primary full">Luu dat ban</button>
+        </form>
+      </div>
+    </div>
+    <div class="toast" id="toast"></div>
+    <script src="js/restaurant.js"></script>
+  </body>
+</html>
