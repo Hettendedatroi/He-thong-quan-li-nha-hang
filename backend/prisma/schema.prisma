@@ -1,0 +1,1068 @@
+// =============================================================================
+//  Restaurant Management System - Database schema (PostgreSQL + Prisma)
+//  Tiền tệ: VND, lưu dạng Int (đồng). Thời gian: lưu UTC.
+//  Các comment "FR-xx" để truy vết yêu cầu trong SRS.
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================== ENUMS ========================================
+
+enum UserStatus {
+  ACTIVE
+  LOCKED
+}
+
+enum AuthProvider {
+  LOCAL
+  GOOGLE
+  FACEBOOK
+}
+
+/// FR-WAT-02: trạng thái bàn trên sơ đồ
+enum TableStatus {
+  AVAILABLE
+  OCCUPIED
+  RESERVED
+  CLEANING
+  READY
+}
+
+enum ReservationStatus {
+  PENDING
+  CONFIRMED
+  REJECTED
+  CANCELLED
+  CHECKED_IN
+  COMPLETED
+  NO_SHOW
+}
+
+enum DepositStatus {
+  NONE
+  PENDING
+  PAID
+  REFUNDED
+  FORFEITED
+}
+
+enum SessionStatus {
+  OPEN
+  CLOSED
+}
+
+enum OrderSource {
+  QR
+  WAITER
+}
+
+enum OrderStatus {
+  PENDING_CONFIRM
+  SENT_TO_KITCHEN
+  COMPLETED
+  CANCELLED
+}
+
+/// FR-14 / FR-KIT-03: PENDING(đã gửi bếp) -> RECEIVED -> PREPARING -> READY(hoàn thành) -> SERVED(đã giao/phục vụ)
+enum OrderItemStatus {
+  PENDING
+  RECEIVED
+  PREPARING
+  READY
+  SERVED
+  CANCELLED
+}
+
+enum ServiceRequestType {
+  CALL_STAFF
+  MORE_ITEMS
+  REQUEST_BILL
+  CHANGE_ITEM
+  CANCEL_ITEM
+  OTHER
+}
+
+/// Thứ tự khai báo = thứ tự sắp xếp trong PostgreSQL (LOW < ... < URGENT)
+enum Priority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum ServiceRequestStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+  CANCELLED
+}
+
+enum BillStatus {
+  OPEN
+  SPLIT
+  PAID
+  VOID
+  REFUNDED
+}
+
+enum PaymentMethod {
+  CASH
+  BANK_TRANSFER
+  E_WALLET
+  POS_CARD
+  ONLINE
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  REFUNDED
+}
+
+enum PromotionType {
+  PERCENT
+  FIXED
+}
+
+enum PromotionScope {
+  ALL
+  CATEGORY
+  ITEMS
+}
+
+enum DayType {
+  WEEKDAY
+  WEEKEND
+  HOLIDAY
+}
+
+enum Reaction {
+  LIKE
+  DISLIKE
+}
+
+enum FeedbackStatus {
+  NEW
+  FLAGGED
+  RESOLVED
+}
+
+enum NotificationChannel {
+  IN_APP
+  PUSH
+  EMAIL
+  SMS
+}
+
+enum IncidentStatus {
+  OPEN
+  RESOLVED
+}
+
+enum DeviceType {
+  KDS
+  TABLET
+  PRINTER
+  POS
+  OTHER
+}
+
+enum LoyaltyType {
+  EARN
+  REDEEM
+  ADJUST
+}
+
+enum ReportFrequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+enum AttendanceSource {
+  MANUAL
+  TIMEKEEPER
+}
+
+// ======================= TÀI KHOẢN & PHÂN QUYỀN ==============================
+
+/// FR-ADM-02: vai trò + danh sách quyền (RBAC). "*" = toàn quyền.
+model Role {
+  id          Int      @id @default(autoincrement())
+  code        String   @unique
+  name        String
+  description String?
+  permissions String[]
+  isSystem    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users User[]
+}
+
+model User {
+  id            Int          @id @default(autoincrement())
+  email         String?      @unique
+  phone         String?      @unique
+  passwordHash  String?
+  fullName      String
+  avatarUrl     String?
+  roleId        Int
+  /// Nhân viên thuộc chi nhánh nào (null = toàn hệ thống / khách hàng)
+  branchId      Int?
+  status        UserStatus   @default(ACTIVE)
+  provider      AuthProvider @default(LOCAL)
+  providerId    String?
+  loyaltyPoints Int          @default(0)
+  /// FR-24: khách có muốn nhận thông báo khuyến mãi không
+  promoOptIn    Boolean      @default(true)
+  language      String       @default("vi")
+  lastLoginAt   DateTime?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  role                   Role                 @relation(fields: [roleId], references: [id])
+  branch                 Branch?              @relation(fields: [branchId], references: [id])
+  sessions               UserSession[]
+  reservations           Reservation[]
+  tableSessions          TableSession[]
+  ordersCreated          Order[]              @relation("OrderCreatedBy")
+  ordersAsCustomer       Order[]              @relation("OrderCustomer")
+  serviceRequestsHandled ServiceRequest[]
+  billsCreated           Bill[]               @relation("BillCreatedBy")
+  billsAsCustomer        Bill[]               @relation("BillCustomer")
+  paymentsReceived       Payment[]
+  dishReviews            DishReview[]
+  feedbacks              Feedback[]           @relation("FeedbackCustomer")
+  feedbacksServed        Feedback[]           @relation("FeedbackStaff")
+  feedbackResponses      FeedbackResponse[]
+  notifications          Notification[]
+  deviceTokens           DeviceToken[]
+  loyaltyTransactions    LoyaltyTransaction[]
+  shiftAssignments       ShiftAssignment[]
+  attendances            Attendance[]
+  shiftReports           ShiftReport[]
+  incidentsReported      Incident[]           @relation("IncidentReporter")
+  incidentsResolved      Incident[]           @relation("IncidentResolver")
+  auditLogs              AuditLog[]
+  reportSchedules        ReportSchedule[]
+
+  @@unique([provider, providerId])
+}
+
+/// FR-ADM-03: phiên đăng nhập (refresh token) - có thể thu hồi
+model UserSession {
+  id               String    @id @default(uuid())
+  userId           Int
+  refreshTokenHash String
+  userAgent        String?
+  ipAddress        String?
+  createdAt        DateTime  @default(now())
+  lastUsedAt       DateTime  @default(now())
+  expiresAt        DateTime
+  revokedAt        DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// ====================== CHI NHÁNH, KHU VỰC, BÀN ==============================
+
+/// FR-ADM-05
+model Branch {
+  id        Int      @id @default(autoincrement())
+  name      String
+  address   String
+  phone     String?
+  openTime  String   @default("09:00")
+  closeTime String   @default("22:00")
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users           User[]
+  zones           Zone[]
+  tables          DiningTable[]
+  reservations    Reservation[]
+  tableSessions   TableSession[]
+  orders          Order[]
+  serviceRequests ServiceRequest[]
+  bills           Bill[]
+  feedbacks       Feedback[]
+  shifts          Shift[]
+  attendances     Attendance[]
+  shiftReports    ShiftReport[]
+  incidents       Incident[]
+  devices         Device[]
+  promotions      Promotion[]
+  reportSchedules ReportSchedule[]
+}
+
+/// FR-ADM-06: khu vực (trong nhà, ngoài trời, VIP...)
+model Zone {
+  id           Int     @id @default(autoincrement())
+  branchId     Int
+  name         String
+  /// INDOOR | OUTDOOR | VIP | ROOFTOP ... (FR-01 vị trí bàn mong muốn)
+  locationType String  @default("INDOOR")
+  sortOrder    Int     @default(0)
+  isActive     Boolean @default(true)
+
+  branch Branch        @relation(fields: [branchId], references: [id])
+  tables DiningTable[]
+
+  @@unique([branchId, name])
+}
+
+model DiningTable {
+  id           Int         @id @default(autoincrement())
+  branchId     Int
+  zoneId       Int
+  code         String
+  capacity     Int
+  status       TableStatus @default(AVAILABLE)
+  /// Token in trong mã QR dán trên bàn (FR-07)
+  qrToken      String      @unique
+  posX         Int         @default(0)
+  posY         Int         @default(0)
+  isActive     Boolean     @default(true)
+  /// FR-WAT-07: bàn này đang được gộp vào bàn khác
+  mergedIntoId Int?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  branch          Branch           @relation(fields: [branchId], references: [id])
+  zone            Zone             @relation(fields: [zoneId], references: [id])
+  mergedInto      DiningTable?     @relation("TableMerge", fields: [mergedIntoId], references: [id])
+  mergedTables    DiningTable[]    @relation("TableMerge")
+  reservations    Reservation[]
+  sessions        TableSession[]
+  orders          Order[]
+  serviceRequests ServiceRequest[]
+  bills           Bill[]
+  incidents       Incident[]
+
+  @@unique([branchId, code])
+}
+
+// ================================ ĐẶT BÀN ====================================
+
+/// FR-01 .. FR-06, FR-WAT-08, FR-WAT-09
+model Reservation {
+  id              Int               @id @default(autoincrement())
+  code            String            @unique
+  branchId        Int
+  tableId         Int?
+  customerId      Int?
+  zonePreference  String?
+  partySize       Int
+  startAt         DateTime
+  endAt           DateTime
+  customerName    String
+  customerPhone   String
+  customerEmail   String?
+  /// BIRTHDAY, VEGETARIAN, ALLERGY, ... (FR-03)
+  specialRequests String[]
+  note            String?
+  status          ReservationStatus @default(PENDING)
+  depositAmount   Int               @default(0)
+  depositStatus   DepositStatus     @default(NONE)
+  confirmedById   Int?
+  rejectReason    String?
+  cancelReason    String?
+  checkedInAt     DateTime?
+  cancelledAt     DateTime?
+  reminderSentAt  DateTime?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  branch        Branch         @relation(fields: [branchId], references: [id])
+  table         DiningTable?   @relation(fields: [tableId], references: [id])
+  customer      User?          @relation(fields: [customerId], references: [id])
+  payments      Payment[]
+  sessions      TableSession[]
+  notifications Notification[]
+
+  @@index([branchId, startAt])
+  @@index([customerPhone])
+}
+
+// ======================== PHIÊN BÀN & GỌI MÓN ================================
+
+/// Một lượt khách ngồi tại bàn (mở khi check-in / quét QR / phục vụ mở bàn)
+model TableSession {
+  id            Int           @id @default(autoincrement())
+  /// Token bí mật khách dùng để gọi món qua QR (không cần cài app)
+  token         String        @unique
+  branchId      Int
+  tableId       Int
+  reservationId Int?
+  customerId    Int?
+  guestCount    Int           @default(1)
+  status        SessionStatus @default(OPEN)
+  openedById    Int?
+  openedAt      DateTime      @default(now())
+  closedAt      DateTime?
+
+  branch          Branch           @relation(fields: [branchId], references: [id])
+  table           DiningTable      @relation(fields: [tableId], references: [id])
+  reservation     Reservation?     @relation(fields: [reservationId], references: [id])
+  customer        User?            @relation(fields: [customerId], references: [id])
+  orders          Order[]
+  cartItems       CartItem[]
+  serviceRequests ServiceRequest[]
+  bills           Bill[]
+  dishReviews     DishReview[]
+  incidents       Incident[]
+
+  @@index([tableId, status])
+  @@index([branchId, openedAt])
+}
+
+/// FR-10: giỏ hàng dùng chung cho cả bàn
+model CartItem {
+  id         Int      @id @default(autoincrement())
+  sessionId  Int
+  menuItemId Int?
+  comboId    Int?
+  quantity   Int
+  note       String?
+  createdAt  DateTime @default(now())
+
+  session  TableSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  menuItem MenuItem?    @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+  combo    Combo?       @relation(fields: [comboId], references: [id], onDelete: Cascade)
+}
+
+model Order {
+  id          Int         @id @default(autoincrement())
+  code        String      @unique
+  branchId    Int
+  sessionId   Int
+  tableId     Int
+  customerId  Int?
+  createdById Int?
+  source      OrderSource
+  status      OrderStatus @default(SENT_TO_KITCHEN)
+  /// FR-KIT-01: ưu tiên cao hiển thị trước trên KDS
+  priority    Int         @default(0)
+  note        String?
+  sentAt      DateTime?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  branch    Branch       @relation(fields: [branchId], references: [id])
+  session   TableSession @relation(fields: [sessionId], references: [id])
+  table     DiningTable  @relation(fields: [tableId], references: [id])
+  customer  User?        @relation("OrderCustomer", fields: [customerId], references: [id])
+  createdBy User?        @relation("OrderCreatedBy", fields: [createdById], references: [id])
+  items     OrderItem[]
+
+  @@index([branchId, createdAt])
+  @@index([sessionId])
+}
+
+model OrderItem {
+  id             Int             @id @default(autoincrement())
+  orderId        Int
+  menuItemId     Int?
+  comboId        Int?
+  /// Lưu lại tên & giá tại thời điểm gọi (giá menu có thể đổi sau)
+  name           String
+  unitPrice      Int
+  quantity       Int
+  discountAmount Int             @default(0)
+  promotionId    Int?
+  note           String?
+  status         OrderItemStatus @default(PENDING)
+  cancelReason   String?
+  cancelledById  Int?
+  /// Nhân viên bếp xử lý món (thống kê hiệu suất)
+  preparedById   Int?
+  receivedAt     DateTime?
+  startedAt      DateTime?
+  readyAt        DateTime?
+  servedAt       DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  order           Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItem        MenuItem?        @relation(fields: [menuItemId], references: [id])
+  combo           Combo?           @relation(fields: [comboId], references: [id])
+  promotion       Promotion?       @relation(fields: [promotionId], references: [id])
+  dishReview      DishReview?
+  serviceRequests ServiceRequest[]
+  billLines       BillLine[]
+
+  @@index([orderId])
+  @@index([status])
+}
+
+// ================================= THỰC ĐƠN ==================================
+
+/// FR-MGR-07
+model MenuCategory {
+  id           Int      @id @default(autoincrement())
+  name         String
+  description  String?
+  imageUrl     String?
+  sortOrder    Int      @default(0)
+  isActive     Boolean  @default(true)
+  /// FR-ADM-10: {"en": {"name": "...", "description": "..."}}
+  translations Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  items MenuItem[]
+}
+
+/// FR-MGR-06, FR-MGR-08, FR-KIT-04
+model MenuItem {
+  id              Int      @id @default(autoincrement())
+  categoryId      Int
+  name            String
+  description     String?
+  price           Int
+  imageUrl        String?
+  prepTimeMinutes Int      @default(15)
+  /// Còn hàng / tạm hết (bếp cập nhật - FR-KIT-04)
+  isAvailable     Boolean  @default(true)
+  /// Ẩn / hiện trên menu khách (quản lý - FR-MGR-08)
+  isVisible       Boolean  @default(true)
+  isDeleted       Boolean  @default(false)
+  tags            String[]
+  translations    Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  category    MenuCategory @relation(fields: [categoryId], references: [id])
+  priceRules  PriceRule[]
+  comboItems  ComboItem[]
+  orderItems  OrderItem[]
+  cartItems   CartItem[]
+  dishReviews DishReview[]
+
+  @@index([categoryId])
+}
+
+/// FR-MGR-09: combo / set menu
+model Combo {
+  id           Int      @id @default(autoincrement())
+  name         String
+  description  String?
+  price        Int
+  imageUrl     String?
+  isActive     Boolean  @default(true)
+  translations Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  items      ComboItem[]
+  orderItems OrderItem[]
+  cartItems  CartItem[]
+}
+
+model ComboItem {
+  id         Int @id @default(autoincrement())
+  comboId    Int
+  menuItemId Int
+  quantity   Int @default(1)
+
+  combo    Combo    @relation(fields: [comboId], references: [id], onDelete: Cascade)
+  menuItem MenuItem @relation(fields: [menuItemId], references: [id])
+
+  @@unique([comboId, menuItemId])
+}
+
+/// FR-MGR-10: giá theo ngày thường / cuối tuần / ngày lễ (có thể kèm khung giờ)
+model PriceRule {
+  id         Int      @id @default(autoincrement())
+  menuItemId Int
+  name       String
+  dayType    DayType
+  price      Int
+  startTime  String?
+  endTime    String?
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  menuItem MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+}
+
+model Holiday {
+  id   Int      @id @default(autoincrement())
+  date DateTime @unique @db.Date
+  name String
+}
+
+/// FR-MGR-09: khuyến mãi tự động (happy hour, code = null) hoặc voucher (có code) - FR-WAT-13
+model Promotion {
+  id             Int            @id @default(autoincrement())
+  branchId       Int?
+  code           String?        @unique
+  name           String
+  description    String?
+  type           PromotionType
+  value          Int
+  maxDiscount    Int?
+  minOrderAmount Int            @default(0)
+  scope          PromotionScope @default(ALL)
+  categoryIds    Int[]
+  menuItemIds    Int[]
+  startAt        DateTime
+  endAt          DateTime
+  /// 0 = Chủ nhật ... 6 = Thứ 7. Rỗng = mọi ngày
+  daysOfWeek     Int[]
+  /// Khung giờ "HH:mm" (happy hour). Null = cả ngày
+  startTime      String?
+  endTime        String?
+  usageLimit     Int?
+  usedCount      Int            @default(0)
+  isActive       Boolean        @default(true)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  branch     Branch?     @relation(fields: [branchId], references: [id])
+  orderItems OrderItem[]
+  bills      Bill[]
+}
+
+// ============================ YÊU CẦU PHỤC VỤ ================================
+
+/// FR-13, FR-WAT-04
+model ServiceRequest {
+  id             Int                  @id @default(autoincrement())
+  branchId       Int
+  sessionId      Int
+  tableId        Int
+  type           ServiceRequestType
+  priority       Priority             @default(NORMAL)
+  message        String?
+  orderItemId    Int?
+  status         ServiceRequestStatus @default(OPEN)
+  handledById    Int?
+  response       String?
+  acknowledgedAt DateTime?
+  resolvedAt     DateTime?
+  createdAt      DateTime             @default(now())
+
+  branch    Branch       @relation(fields: [branchId], references: [id])
+  session   TableSession @relation(fields: [sessionId], references: [id])
+  table     DiningTable  @relation(fields: [tableId], references: [id])
+  orderItem OrderItem?   @relation(fields: [orderItemId], references: [id])
+  handledBy User?        @relation(fields: [handledById], references: [id])
+
+  @@index([branchId, status])
+}
+
+// ========================== HÓA ĐƠN & THANH TOÁN =============================
+
+/// FR-WAT-13, FR-WAT-14, FR-WAT-16
+model Bill {
+  id                   Int        @id @default(autoincrement())
+  code                 String     @unique
+  branchId             Int
+  sessionId            Int
+  tableId              Int
+  /// Hóa đơn con khi tách bill
+  parentBillId         Int?
+  customerId           Int?
+  createdById          Int?
+  promotionId          Int?
+  voucherCode          String?
+  subtotal             Int        @default(0)
+  itemDiscount         Int        @default(0)
+  voucherDiscount      Int        @default(0)
+  manualDiscount       Int        @default(0)
+  manualDiscountReason String?
+  pointsRedeemed       Int        @default(0)
+  pointsDiscount       Int        @default(0)
+  serviceCharge        Int        @default(0)
+  vatAmount            Int        @default(0)
+  total                Int        @default(0)
+  paidAmount           Int        @default(0)
+  refundedAmount       Int        @default(0)
+  pointsEarned         Int        @default(0)
+  status               BillStatus @default(OPEN)
+  splitLabel           String?
+  voidReason           String?
+  voidedById           Int?
+  paidAt               DateTime?
+  createdAt            DateTime   @default(now())
+  updatedAt            DateTime   @updatedAt
+
+  branch              Branch               @relation(fields: [branchId], references: [id])
+  session             TableSession         @relation(fields: [sessionId], references: [id])
+  table               DiningTable          @relation(fields: [tableId], references: [id])
+  parentBill          Bill?                @relation("BillSplit", fields: [parentBillId], references: [id])
+  childBills          Bill[]               @relation("BillSplit")
+  customer            User?                @relation("BillCustomer", fields: [customerId], references: [id])
+  createdBy           User?                @relation("BillCreatedBy", fields: [createdById], references: [id])
+  promotion           Promotion?           @relation(fields: [promotionId], references: [id])
+  lines               BillLine[]
+  payments            Payment[]
+  feedback            Feedback?
+  loyaltyTransactions LoyaltyTransaction[]
+
+  @@index([branchId, paidAt])
+  @@index([sessionId])
+}
+
+model BillLine {
+  id          Int    @id @default(autoincrement())
+  billId      Int
+  orderItemId Int?
+  name        String
+  unitPrice   Int
+  quantity    Int
+  discount    Int    @default(0)
+  amount      Int
+
+  bill      Bill       @relation(fields: [billId], references: [id], onDelete: Cascade)
+  orderItem OrderItem? @relation(fields: [orderItemId], references: [id])
+}
+
+/// Thanh toán hóa đơn hoặc đặt cọc (FR-04). Thông tin nhạy cảm được mã hóa (NFR-03)
+model Payment {
+  id               Int           @id @default(autoincrement())
+  billId           Int?
+  reservationId    Int?
+  method           PaymentMethod
+  /// Số âm = hoàn tiền
+  amount           Int
+  status           PaymentStatus @default(PENDING)
+  provider         String?
+  encryptedDetails String?
+  note             String?
+  receivedById     Int?
+  createdAt        DateTime      @default(now())
+  completedAt      DateTime?
+
+  bill        Bill?        @relation(fields: [billId], references: [id])
+  reservation Reservation? @relation(fields: [reservationId], references: [id])
+  receivedBy  User?        @relation(fields: [receivedById], references: [id])
+
+  @@index([billId])
+  @@index([createdAt])
+}
+
+// ========================== ĐÁNH GIÁ & PHẢN HỒI ==============================
+
+/// FR-16: like/dislike hoặc chấm sao từng món đã gọi
+model DishReview {
+  id          Int       @id @default(autoincrement())
+  menuItemId  Int
+  orderItemId Int?      @unique
+  sessionId   Int?
+  customerId  Int?
+  rating      Int?
+  reaction    Reaction?
+  comment     String?
+  isAnonymous Boolean   @default(false)
+  isHidden    Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+
+  menuItem  MenuItem           @relation(fields: [menuItemId], references: [id])
+  orderItem OrderItem?         @relation(fields: [orderItemId], references: [id])
+  session   TableSession?      @relation(fields: [sessionId], references: [id])
+  customer  User?              @relation(fields: [customerId], references: [id])
+  responses FeedbackResponse[]
+
+  @@index([menuItemId])
+}
+
+/// FR-17..FR-19: đánh giá trải nghiệm theo hóa đơn - mỗi hóa đơn 1 lần (billId unique)
+model Feedback {
+  id             Int            @id @default(autoincrement())
+  billId         Int            @unique
+  branchId       Int
+  customerId     Int?
+  /// Nhân viên phục vụ hóa đơn (lọc theo nhân viên - FR-MGR-11)
+  staffId        Int?
+  isAnonymous    Boolean        @default(false)
+  rating         Int
+  foodRating     Int?
+  serviceRating  Int?
+  ambienceRating Int?
+  comment        String?
+  photos         String[]
+  contactEmail   String?
+  wantsResponse  Boolean        @default(false)
+  status         FeedbackStatus @default(NEW)
+  isFlagged      Boolean        @default(false)
+  flagNote       String?
+  flaggedById    Int?
+  createdAt      DateTime       @default(now())
+
+  bill      Bill               @relation(fields: [billId], references: [id])
+  branch    Branch             @relation(fields: [branchId], references: [id])
+  customer  User?              @relation("FeedbackCustomer", fields: [customerId], references: [id])
+  staff     User?              @relation("FeedbackStaff", fields: [staffId], references: [id])
+  responses FeedbackResponse[]
+  incidents Incident[]
+
+  @@index([branchId, createdAt])
+}
+
+/// FR-20, FR-MGR-12
+model FeedbackResponse {
+  id           Int      @id @default(autoincrement())
+  feedbackId   Int?
+  dishReviewId Int?
+  responderId  Int
+  message      String
+  isPublic     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  feedback   Feedback?   @relation(fields: [feedbackId], references: [id], onDelete: Cascade)
+  dishReview DishReview? @relation(fields: [dishReviewId], references: [id], onDelete: Cascade)
+  responder  User        @relation(fields: [responderId], references: [id])
+}
+
+// ============================== THÔNG BÁO ====================================
+
+/// FR-21..FR-24
+model Notification {
+  id            Int                 @id @default(autoincrement())
+  userId        Int?
+  reservationId Int?
+  channel       NotificationChannel @default(IN_APP)
+  type          String
+  title         String
+  body          String
+  data          Json?
+  isRead        Boolean             @default(false)
+  createdAt     DateTime            @default(now())
+
+  user        User?        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reservation Reservation? @relation(fields: [reservationId], references: [id], onDelete: SetNull)
+
+  @@index([userId, isRead])
+}
+
+/// FR-ADM-09: mẫu nội dung thông báo, hỗ trợ biến {{name}}
+model NotificationTemplate {
+  id        Int                 @id @default(autoincrement())
+  code      String
+  channel   NotificationChannel
+  language  String              @default("vi")
+  title     String
+  body      String
+  isActive  Boolean             @default(true)
+  updatedAt DateTime            @updatedAt
+
+  @@unique([code, channel, language])
+}
+
+/// Token push (FCM/APNs/Web Push) của thiết bị khách hàng
+model DeviceToken {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  token     String   @unique
+  platform  String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+/// FR-27
+model LoyaltyTransaction {
+  id        Int         @id @default(autoincrement())
+  userId    Int
+  billId    Int?
+  type      LoyaltyType
+  points    Int
+  note      String?
+  createdAt DateTime    @default(now())
+
+  user User  @relation(fields: [userId], references: [id])
+  bill Bill? @relation(fields: [billId], references: [id])
+}
+
+// ======================== NHÂN SỰ, CA LÀM, SỰ CỐ =============================
+
+/// FR-MGR-17
+model Shift {
+  id        Int      @id @default(autoincrement())
+  branchId  Int
+  name      String
+  startAt   DateTime
+  endAt     DateTime
+  note      String?
+  createdAt DateTime @default(now())
+
+  branch      Branch            @relation(fields: [branchId], references: [id])
+  assignments ShiftAssignment[]
+  attendances Attendance[]
+  reports     ShiftReport[]
+
+  @@index([branchId, startAt])
+}
+
+model ShiftAssignment {
+  id        Int      @id @default(autoincrement())
+  shiftId   Int
+  userId    Int
+  position  String?
+  createdAt DateTime @default(now())
+
+  shift Shift @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id])
+
+  @@unique([shiftId, userId])
+}
+
+/// FR-MGR-18: chấm công
+model Attendance {
+  id         Int              @id @default(autoincrement())
+  userId     Int
+  branchId   Int?
+  shiftId    Int?
+  checkInAt  DateTime
+  checkOutAt DateTime?
+  source     AttendanceSource @default(MANUAL)
+  note       String?
+  createdAt  DateTime         @default(now())
+
+  user   User    @relation(fields: [userId], references: [id])
+  branch Branch? @relation(fields: [branchId], references: [id])
+  shift  Shift?  @relation(fields: [shiftId], references: [id], onDelete: SetNull)
+
+  @@index([userId, checkInAt])
+}
+
+/// FR-WAT-18: báo cáo nhanh cuối ca
+model ShiftReport {
+  id               Int      @id @default(autoincrement())
+  branchId         Int
+  shiftId          Int?
+  submittedById    Int
+  periodStart      DateTime
+  periodEnd        DateTime
+  revenue          Int
+  billCount        Int
+  orderCount       Int
+  guestCount       Int
+  incidentsSummary String?
+  lowStockItems    String[]
+  notes            String?
+  createdAt        DateTime @default(now())
+
+  branch      Branch @relation(fields: [branchId], references: [id])
+  shift       Shift? @relation(fields: [shiftId], references: [id], onDelete: SetNull)
+  submittedBy User   @relation(fields: [submittedById], references: [id])
+}
+
+/// FR-WAT-17: khiếu nại / sự cố trong ca
+model Incident {
+  id           Int            @id @default(autoincrement())
+  branchId     Int
+  sessionId    Int?
+  tableId      Int?
+  feedbackId   Int?
+  /// COMPLAINT | ACCIDENT | EQUIPMENT | OTHER
+  type         String
+  severity     Priority       @default(NORMAL)
+  description  String
+  status       IncidentStatus @default(OPEN)
+  resolution   String?
+  reportedById Int
+  resolvedById Int?
+  createdAt    DateTime       @default(now())
+  resolvedAt   DateTime?
+
+  branch     Branch        @relation(fields: [branchId], references: [id])
+  session    TableSession? @relation(fields: [sessionId], references: [id])
+  table      DiningTable?  @relation(fields: [tableId], references: [id])
+  feedback   Feedback?     @relation(fields: [feedbackId], references: [id])
+  reportedBy User          @relation("IncidentReporter", fields: [reportedById], references: [id])
+  resolvedBy User?         @relation("IncidentResolver", fields: [resolvedById], references: [id])
+
+  @@index([branchId, status])
+}
+
+// ============================ HỆ THỐNG ======================================
+
+/// FR-ADM-11: thiết bị (KDS, tablet, máy in) - theo dõi kết nối
+model Device {
+  id         Int        @id @default(autoincrement())
+  branchId   Int
+  name       String
+  type       DeviceType
+  deviceKey  String     @unique
+  isOnline   Boolean    @default(false)
+  lastSeenAt DateTime?
+  ipAddress  String?
+  createdAt  DateTime   @default(now())
+
+  branch Branch @relation(fields: [branchId], references: [id])
+}
+
+/// FR-ADM-04, NFR-06
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  userId    Int?
+  action    String
+  entity    String
+  entityId  String?
+  data      Json?
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([entity, entityId])
+  @@index([createdAt])
+}
+
+/// FR-ADM-13
+model ErrorLog {
+  id         Int      @id @default(autoincrement())
+  level      String   @default("error")
+  message    String
+  stack      String?
+  method     String?
+  path       String?
+  statusCode Int?
+  userId     Int?
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+/// FR-ADM-05, 07, 08, 10: cấu hình dạng key-value JSON
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+/// FR-MGR-16: lịch tự động gửi báo cáo qua email
+model ReportSchedule {
+  id          Int             @id @default(autoincrement())
+  name        String
+  /// revenue | dishes | reservations | feedback
+  reportType  String
+  /// xlsx | pdf
+  format      String
+  frequency   ReportFrequency
+  recipients  String[]
+  branchId    Int?
+  isActive    Boolean         @default(true)
+  lastRunAt   DateTime?
+  nextRunAt   DateTime
+  createdById Int
+  createdAt   DateTime        @default(now())
+
+  branch    Branch? @relation(fields: [branchId], references: [id])
+  createdBy User    @relation(fields: [createdById], references: [id])
+}
