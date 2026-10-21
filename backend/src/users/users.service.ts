@@ -1,7 +1,8 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma, Role } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { normalizePhone, toPublicUser } from '../auth/auth.service';
+import type { AuthUser } from '../common/types/auth-user';
 import { randomCode } from '../common/utils/codes';
 import { paged, toSkipTake } from '../common/utils/pagination';
 import { parseDateRange } from '../common/utils/time';
@@ -26,6 +27,7 @@ export class UsersService {
         ? {
             OR: [
               { fullName: { contains: q.search, mode: 'insensitive' } },
+              { username: { contains: q.search, mode: 'insensitive' } },
               { email: { contains: q.search, mode: 'insensitive' } },
               { phone: { contains: q.search } },
             ],
@@ -55,17 +57,19 @@ export class UsersService {
     return { ...toPublicUser(user), branch: user.branch };
   }
 
-  async create(actorId: number, dto: CreateUserDto) {
+  /** US-18 AC1: tài khoản nhân viên cần họ tên, tên đăng nhập duy nhất, vai trò, mật khẩu ban đầu */
+  async create(actor: AuthUser, dto: CreateUserDto) {
     const role = await this.findRole(dto.roleCode);
+    this.assertCanGrant(actor, role);
     const email = dto.email?.toLowerCase() ?? null;
     const phone = normalizePhone(dto.phone);
-    if (!email && !phone) throw new BadRequestException('Cần email hoặc số điện thoại để đăng nhập');
-    await this.assertUnique(email, phone);
+    await this.assertUnique({ username: dto.username, email, phone });
     if (dto.branchId) await this.prisma.branch.findUniqueOrThrow({ where: { id: dto.branchId } });
 
     const user = await this.prisma.user.create({
       data: {
         fullName: dto.fullName,
+        username: dto.username,
         email,
         phone,
         passwordHash: await bcrypt.hash(dto.password, 10),
@@ -75,7 +79,7 @@ export class UsersService {
       include: { role: true },
     });
     await this.audit.log({
-      userId: actorId,
+      userId: actor.id,
       action: 'user.create',
       entity: 'User',
       entityId: user.id,
@@ -84,18 +88,24 @@ export class UsersService {
     return toPublicUser(user);
   }
 
-  async update(actorId: number, id: number, dto: UpdateUserDto) {
+  async update(actor: AuthUser, id: number, dto: UpdateUserDto) {
     const before = await this.prisma.user.findUnique({ where: { id }, include: { role: true } });
     if (!before) throw new NotFoundException('Không tìm thấy tài khoản');
+    this.assertCanGrant(actor, before.role);
     const email = dto.email?.toLowerCase();
     const phone = dto.phone ? normalizePhone(dto.phone) : undefined;
-    await this.assertUnique(email ?? null, phone ?? null, id);
+    await this.assertUnique({ username: dto.username, email, phone }, id);
     const role = dto.roleCode ? await this.findRole(dto.roleCode) : null;
+    if (role) {
+      this.assertCanGrant(actor, role);
+      if (actor.id === id && role.id !== before.roleId) throw new BadRequestException('Không thể tự đổi vai trò của chính mình');
+    }
 
     const user = await this.prisma.user.update({
       where: { id },
       data: {
         fullName: dto.fullName,
+        username: dto.username,
         email,
         phone,
         roleId: role?.id,
@@ -104,7 +114,7 @@ export class UsersService {
       include: { role: true },
     });
     await this.audit.log({
-      userId: actorId,
+      userId: actor.id,
       action: role && role.id !== before.roleId ? 'user.role_change' : 'user.update',
       entity: 'User',
       entityId: id,
@@ -113,9 +123,10 @@ export class UsersService {
     return toPublicUser(user);
   }
 
-  /** FR-ADM-01: khóa tài khoản + thu hồi mọi phiên đăng nhập */
-  async setLocked(actorId: number, id: number, locked: boolean, reason?: string) {
-    if (actorId === id) throw new BadRequestException('Không thể tự khóa / mở khóa chính mình');
+  /** FR-ADM-01, US-18 AC2/AC4: khóa tài khoản + thu hồi mọi phiên đăng nhập; không tự khóa chính mình */
+  async setLocked(actor: AuthUser, id: number, locked: boolean, reason?: string) {
+    if (actor.id === id) throw new BadRequestException('Không thể tự khóa / mở khóa chính mình');
+    await this.assertCanManageUser(actor, id);
     const user = await this.prisma.user.update({
       where: { id },
       data: { status: locked ? 'LOCKED' : 'ACTIVE' },
@@ -123,7 +134,7 @@ export class UsersService {
     });
     if (locked) await this.revokeAllSessions(id);
     await this.audit.log({
-      userId: actorId,
+      userId: actor.id,
       action: locked ? 'user.lock' : 'user.unlock',
       entity: 'User',
       entityId: id,
@@ -132,12 +143,13 @@ export class UsersService {
     return toPublicUser(user);
   }
 
-  /** FR-ADM-03: đặt lại mật khẩu */
-  async resetPassword(actorId: number, id: number, newPassword?: string) {
+  /** FR-ADM-03, US-18 AC3: đặt lại mật khẩu */
+  async resetPassword(actor: AuthUser, id: number, newPassword?: string) {
+    await this.assertCanManageUser(actor, id);
     const password = newPassword ?? `Rm@${randomCode(8)}`;
     await this.prisma.user.update({ where: { id }, data: { passwordHash: await bcrypt.hash(password, 10) } });
     await this.revokeAllSessions(id);
-    await this.audit.log({ userId: actorId, action: 'user.reset_password', entity: 'User', entityId: id });
+    await this.audit.log({ userId: actor.id, action: 'user.reset_password', entity: 'User', entityId: id });
     return { ok: true, temporaryPassword: newPassword ? undefined : password };
   }
 
@@ -199,14 +211,35 @@ export class UsersService {
     return role;
   }
 
-  private async assertUnique(email: string | null, phone: string | null, exceptId?: number) {
+  /**
+   * Chống leo thang quyền: người không có "*" chỉ được gán / quản lý vai trò
+   * có quyền nằm trong quyền của chính mình (vd. Quản lý không tạo được Admin).
+   */
+  private assertCanGrant(actor: AuthUser, role: Pick<Role, 'permissions'>) {
+    if (actor.permissions.includes('*')) return;
+    if (role.permissions.some((p) => p === '*' || !actor.permissions.includes(p))) {
+      throw new ForbiddenException('Không thể quản lý tài khoản có quyền cao hơn bạn');
+    }
+  }
+
+  private async assertCanManageUser(actor: AuthUser, id: number) {
+    const target = await this.prisma.user.findUnique({ where: { id }, include: { role: true } });
+    if (!target) throw new NotFoundException('Không tìm thấy tài khoản');
+    this.assertCanGrant(actor, target.role);
+  }
+
+  private async assertUnique(
+    fields: { username?: string | null; email?: string | null; phone?: string | null },
+    exceptId?: number,
+  ) {
     const or: Prisma.UserWhereInput[] = [];
-    if (email) or.push({ email });
-    if (phone) or.push({ phone });
+    if (fields.username) or.push({ username: fields.username });
+    if (fields.email) or.push({ email: fields.email });
+    if (fields.phone) or.push({ phone: fields.phone });
     if (!or.length) return;
     const exists = await this.prisma.user.findFirst({
       where: { OR: or, ...(exceptId ? { id: { not: exceptId } } : {}) },
     });
-    if (exists) throw new ConflictException('Email hoặc số điện thoại đã được sử dụng');
+    if (exists) throw new ConflictException('Tên đăng nhập, email hoặc số điện thoại đã được sử dụng');
   }
 }

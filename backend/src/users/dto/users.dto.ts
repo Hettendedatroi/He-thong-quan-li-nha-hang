@@ -1,4 +1,5 @@
 import { UserStatus } from '@prisma/client';
+import { Transform } from 'class-transformer';
 import {
   ArrayUnique,
   IsArray,
@@ -12,7 +13,7 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
-import { PHONE_REGEX } from '../../auth/dto/auth.dto';
+import { MIN_PASSWORD_LENGTH, PHONE_REGEX, USERNAME_REGEX } from '../../auth/dto/auth.dto';
 import { PaginationQueryDto } from '../../common/utils/pagination';
 
 export class ListUsersQueryDto extends PaginationQueryDto {
@@ -39,6 +40,11 @@ export class CreateUserDto {
   @MaxLength(100)
   fullName: string;
 
+  /** US-18: tên đăng nhập duy nhất */
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim().toLowerCase() : value))
+  @Matches(USERNAME_REGEX, { message: 'Tên đăng nhập 3-30 ký tự, chỉ gồm chữ thường, số, dấu chấm, gạch dưới' })
+  username: string;
+
   @IsOptional()
   @IsEmail()
   email?: string;
@@ -48,10 +54,10 @@ export class CreateUserDto {
   phone?: string;
 
   @IsString()
-  @MinLength(6)
+  @MinLength(MIN_PASSWORD_LENGTH, { message: `Mật khẩu phải có ít nhất ${MIN_PASSWORD_LENGTH} ký tự` })
   password: string;
 
-  /** Mã vai trò: MANAGER, WAITER, SENIOR_WAITER, KITCHEN, ADMIN hoặc vai trò tự tạo */
+  /** Mã vai trò: MANAGER, WAITER, KITCHEN (hoặc SENIOR_WAITER, ADMIN, vai trò tự tạo) */
   @IsString()
   @IsNotEmpty()
   roleCode: string;
@@ -66,6 +72,12 @@ export class UpdateUserDto {
   @IsString()
   @MaxLength(100)
   fullName?: string;
+
+  /** US-18: tên đăng nhập duy nhất */
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim().toLowerCase() : value))
+  @Matches(USERNAME_REGEX, { message: 'Tên đăng nhập 3-30 ký tự, chỉ gồm chữ thường, số, dấu chấm, gạch dưới' })
+  username?: string;
 
   @IsOptional()
   @IsEmail()
@@ -95,7 +107,7 @@ export class ResetPasswordDto {
   /** Bỏ trống để hệ thống sinh mật khẩu tạm */
   @IsOptional()
   @IsString()
-  @MinLength(6)
+  @MinLength(MIN_PASSWORD_LENGTH, { message: `Mật khẩu phải có ít nhất ${MIN_PASSWORD_LENGTH} ký tự` })
   newPassword?: string;
 }
 

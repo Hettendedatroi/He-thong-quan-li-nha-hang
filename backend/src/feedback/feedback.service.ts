@@ -20,6 +20,9 @@ import {
 /** Khách được đánh giá trong vòng N ngày sau bữa ăn */
 const REVIEW_WINDOW_DAYS = 7;
 
+/** FR-MGR-13, US-20 AC4: đánh giá ≤ 2 sao bị gắn cờ */
+const LOW_RATING = 2;
+
 const FEEDBACK_INCLUDE = {
   bill: { select: { id: true, code: true, total: true, paidAt: true, table: { select: { code: true } } } },
   customer: { select: { id: true, fullName: true, phone: true } },
@@ -49,7 +52,11 @@ export class FeedbackService {
   /** FR-16: đánh giá từng món đã gọi */
   async createDishReview(token: string, dto: CreateDishReviewDto, user?: AuthUser) {
     const session = await this.getReviewableSession(token);
-    if (dto.rating == null && !dto.reaction) throw new BadRequestException('Hãy chấm sao hoặc chọn thích / không thích');
+    // US-5 AC1: chỉ mở đánh giá món khi hóa đơn của bàn đã thanh toán
+    const paidBills = await this.prisma.bill.count({
+      where: { sessionId: session.id, parentBillId: null, status: { in: ['PAID', 'REFUNDED'] } },
+    });
+    if (!paidBills) throw new BadRequestException('Chỉ đánh giá món sau khi hóa đơn đã được thanh toán');
     const item = await this.prisma.orderItem.findFirst({
       where: { id: dto.orderItemId, order: { sessionId: session.id } },
     });
@@ -86,7 +93,7 @@ export class FeedbackService {
     const existed = await this.prisma.feedback.findUnique({ where: { billId: bill.id } });
     if (existed) throw new ConflictException('Hóa đơn này đã được đánh giá và đã khóa');
 
-    const lowRating = dto.rating <= 2;
+    const lowRating = dto.rating <= LOW_RATING;
     const feedback = await this.prisma.feedback.create({
       data: {
         billId: bill.id,
@@ -157,11 +164,42 @@ export class FeedbackService {
       ...(q.minRating || q.maxRating ? { rating: { gte: q.minRating ?? 1, lte: q.maxRating ?? 5 } } : {}),
       ...(range ? { createdAt: { gte: range.from, lt: range.to } } : {}),
     };
-    const [items, total] = await Promise.all([
+    if (q.flagged !== undefined) {
+      where.AND = [q.flagged ? { rating: { lte: LOW_RATING } } : { OR: [{ rating: null }, { rating: { gt: LOW_RATING } }] }];
+    }
+    const [items, total, averages] = await Promise.all([
       this.prisma.dishReview.findMany({ where, include: REVIEW_INCLUDE, orderBy: { createdAt: 'desc' }, ...toSkipTake(q.page, q.limit) }),
       this.prisma.dishReview.count({ where }),
+      // US-20 AC3: điểm trung bình của từng món (theo cùng bộ lọc)
+      this.prisma.dishReview.groupBy({
+        by: ['menuItemId'],
+        where: { AND: [where, { rating: { not: null } }] },
+        _avg: { rating: true },
+        _count: { rating: true },
+      }),
     ]);
-    return paged(items, total, q.page, q.limit);
+    const names = await this.prisma.menuItem.findMany({
+      where: { id: { in: averages.map((a) => a.menuItemId) } },
+      select: { id: true, name: true },
+    });
+    const nameOf = new Map(names.map((m) => [m.id, m.name]));
+    return {
+      // US-20 AC4: đánh giá ≤ 2 sao được gắn cờ
+      ...paged(
+        items.map((r) => ({ ...r, isFlagged: r.rating != null && r.rating <= LOW_RATING })),
+        total,
+        q.page,
+        q.limit,
+      ),
+      dishAverages: averages
+        .map((a) => ({
+          menuItemId: a.menuItemId,
+          name: nameOf.get(a.menuItemId) ?? null,
+          averageRating: a._avg.rating == null ? null : Math.round(a._avg.rating * 10) / 10,
+          ratingCount: a._count.rating,
+        }))
+        .sort((a, b) => (b.averageRating ?? 0) - (a.averageRating ?? 0)),
+    };
   }
 
   /** FR-WAT-05: đánh giá mới nhất (gộp đánh giá món + trải nghiệm) */

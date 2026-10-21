@@ -43,7 +43,7 @@ export class ReportsService {
              COUNT(DISTINCT COALESCE(b."parentBillId", b.id))::int AS bills
       FROM "Payment" p
       JOIN "Bill" b ON b.id = p."billId"
-      WHERE p.status IN ('SUCCESS', 'REFUNDED')
+      WHERE p.status IN ('SUCCESS', 'REFUNDED') AND b.status IN ('PAID', 'REFUNDED')
         AND p."createdAt" >= ${ts(from)} AND p."createdAt" < ${ts(to)}
         ${andBranch(Prisma.sql`b."branchId"`, branchId)}
       GROUP BY 1
@@ -63,7 +63,7 @@ export class ReportsService {
         FROM "Payment" p
         JOIN "Bill" b ON b.id = p."billId"
         WHERE b."branchId" = s."branchId"
-          AND p.status IN ('SUCCESS', 'REFUNDED')
+          AND p.status IN ('SUCCESS', 'REFUNDED') AND b.status IN ('PAID', 'REFUNDED')
           AND p."createdAt" >= s."startAt" AND p."createdAt" < s."endAt"
       ) x ON TRUE
       WHERE s."startAt" >= ${ts(from)} AND s."startAt" < ${ts(to)}
@@ -78,14 +78,14 @@ export class ReportsService {
              COUNT(DISTINCT COALESCE(b."parentBillId", b.id))::int AS bills
       FROM "Payment" p
       JOIN "Bill" b ON b.id = p."billId"
-      WHERE p.status IN ('SUCCESS', 'REFUNDED')
+      WHERE p.status IN ('SUCCESS', 'REFUNDED') AND b.status IN ('PAID', 'REFUNDED')
         AND p."createdAt" >= ${ts(from)} AND p."createdAt" < ${ts(to)}
         ${andBranch(Prisma.sql`b."branchId"`, branchId)}`;
     const byMethod = await this.prisma.$queryRaw<{ method: string; amount: number }[]>`
       SELECT p.method::text AS method, COALESCE(SUM(p.amount), 0)::float8 AS amount
       FROM "Payment" p
       JOIN "Bill" b ON b.id = p."billId"
-      WHERE p.status IN ('SUCCESS', 'REFUNDED')
+      WHERE p.status IN ('SUCCESS', 'REFUNDED') AND b.status IN ('PAID', 'REFUNDED')
         AND p."createdAt" >= ${ts(from)} AND p."createdAt" < ${ts(to)}
         ${andBranch(Prisma.sql`b."branchId"`, branchId)}
       GROUP BY p.method`;
@@ -175,6 +175,7 @@ export class ReportsService {
   // ------------------------------------------------------------ FR-MGR-03: thống kê món
   async dishes(from: Date, to: Date, branchId?: number, limit = 10) {
     const [ordered, reviews, cancelled] = await Promise.all([
+      // US-19 AC3: top món theo số lượng bán trong các hóa đơn đã thanh toán (lọc theo ngày thanh toán)
       this.prisma.$queryRaw<{ menuItemId: number; name: string; quantity: number; revenue: number }[]>`
         SELECT oi."menuItemId", mi.name,
                SUM(oi.quantity)::int AS quantity,
@@ -183,7 +184,12 @@ export class ReportsService {
         JOIN "Order" o ON o.id = oi."orderId"
         JOIN "MenuItem" mi ON mi.id = oi."menuItemId"
         WHERE oi.status <> 'CANCELLED'
-          AND o."createdAt" >= ${ts(from)} AND o."createdAt" < ${ts(to)}
+          AND EXISTS (
+            SELECT 1 FROM "Bill" b
+            WHERE b."sessionId" = o."sessionId" AND b."parentBillId" IS NULL
+              AND b.status IN ('PAID', 'REFUNDED')
+              AND b."paidAt" >= ${ts(from)} AND b."paidAt" < ${ts(to)}
+          )
           ${andBranch(Prisma.sql`o."branchId"`, branchId)}
         GROUP BY oi."menuItemId", mi.name
         ORDER BY quantity DESC`,

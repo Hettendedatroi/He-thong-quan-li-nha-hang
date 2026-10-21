@@ -51,16 +51,19 @@ Không dùng Docker? Cài PostgreSQL, tạo database `restaurant_db` và sửa `
 
 ### Tài khoản mẫu (mật khẩu chung `Password@123`)
 
-| Vai trò | Email | SĐT |
-|---|---|---|
-| Quản trị hệ thống (ADMIN) | admin@restaurant.local | 0900000001 |
-| Quản lý nhà hàng (MANAGER) | manager@restaurant.local | 0900000002 |
-| Phục vụ - trưởng ca (SENIOR_WAITER) | leader@restaurant.local | 0900000003 |
-| Phục vụ (WAITER) | waiter@restaurant.local | 0900000004 |
-| Bếp (KITCHEN) | kitchen@restaurant.local | 0900000005 |
-| Khách hàng (CUSTOMER) | customer@example.com | 0911111111 |
+Theo US-15 AC3 của Product Backlog: 1 quản lý, 2 phục vụ, 1 bếp. Nhân viên đăng nhập bằng **tên đăng nhập** (`identifier` trong `POST /api/auth/login`); email / SĐT vẫn dùng được.
 
-Dữ liệu mẫu còn có: 2 chi nhánh, 3 khu vực/chi nhánh (Trong nhà, Ngoài trời, VIP), 12 bàn/chi nhánh, 14 món, 1 combo, happy hour đồ uống 17:00-19:00 (thứ 2 - thứ 6), voucher `WELCOME10`, 2 thiết bị (KDS, máy in) và ca làm hôm nay.
+| Vai trò | Tên đăng nhập | Email | SĐT |
+|---|---|---|---|
+| Quản lý nhà hàng (MANAGER) | `manager` | manager@restaurant.local | 0900000002 |
+| Phục vụ (WAITER) | `waiter1` | waiter@restaurant.local | 0900000004 |
+| Phục vụ (WAITER) | `waiter2` | waiter2@restaurant.local | 0900000006 |
+| Bếp (KITCHEN) | `kitchen` | kitchen@restaurant.local | 0900000005 |
+| Khách hàng (CUSTOMER) | - | customer@example.com | 0911111111 |
+
+Dữ liệu mẫu còn có: 1 nhà hàng, 3 khu vực (Trong nhà, Ngoài trời, VIP), 8 bàn (2-12 chỗ), 10 món, 1 combo, happy hour đồ uống 17:00-19:00 (thứ 2 - thứ 6), voucher `WELCOME10`, 2 thiết bị (KDS, máy in) và ca làm hôm nay.
+
+> Seed chỉ thêm / cập nhật, không xóa. DB đã seed theo bản cũ (2 chi nhánh, 24 bàn, tài khoản admin...) sẽ vẫn giữ dữ liệu cũ; muốn đúng số liệu trên thì chạy `npm run db:reset` (xóa sạch DB dev).
 
 ### Các lệnh hay dùng
 

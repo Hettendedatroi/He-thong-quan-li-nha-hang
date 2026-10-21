@@ -11,6 +11,10 @@ import {
 } from 'class-validator';
 
 export const PHONE_REGEX = /^(\+?84|0)\d{9,10}$/;
+/** US-6 AC1, DoD A-03: mật khẩu tối thiểu 8 ký tự */
+export const MIN_PASSWORD_LENGTH = 8;
+/** US-18: tên đăng nhập của nhân viên (chữ thường, số, dấu chấm, gạch dưới) */
+export const USERNAME_REGEX = /^[a-z0-9._]{3,30}$/;
 
 export class RegisterDto {
   @IsString()
@@ -27,13 +31,13 @@ export class RegisterDto {
   phone?: string;
 
   @IsString()
-  @MinLength(6)
+  @MinLength(MIN_PASSWORD_LENGTH, { message: `Mật khẩu phải có ít nhất ${MIN_PASSWORD_LENGTH} ký tự` })
   @MaxLength(100)
   password: string;
 }
 
 export class LoginDto {
-  /** Email hoặc số điện thoại */
+  /** Tên đăng nhập (nhân viên), email hoặc số điện thoại */
   @IsString()
   @IsNotEmpty()
   identifier: string;
@@ -93,7 +97,7 @@ export class ChangePasswordDto {
   currentPassword?: string;
 
   @IsString()
-  @MinLength(6)
+  @MinLength(MIN_PASSWORD_LENGTH, { message: `Mật khẩu phải có ít nhất ${MIN_PASSWORD_LENGTH} ký tự` })
   @MaxLength(100)
   newPassword: string;
 }

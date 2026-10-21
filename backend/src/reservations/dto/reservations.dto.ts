@@ -18,6 +18,9 @@ import {
 import { PHONE_REGEX } from '../../auth/dto/auth.dto';
 import { PaginationQueryDto } from '../../common/utils/pagination';
 
+/** US-4 AC1: số khách mỗi lượt đặt bàn 1-12 */
+export const MAX_PARTY_SIZE = 12;
+
 export class AvailabilityQueryDto {
   @IsInt()
   branchId: number;
@@ -28,7 +31,7 @@ export class AvailabilityQueryDto {
 
   @IsInt()
   @Min(1)
-  @Max(50)
+  @Max(MAX_PARTY_SIZE, { message: `Số khách tối đa ${MAX_PARTY_SIZE} người` })
   partySize: number;
 
   @IsOptional()
@@ -90,7 +93,7 @@ export class UpdateReservationDto {
   @IsOptional()
   @IsInt()
   @Min(1)
-  @Max(50)
+  @Max(MAX_PARTY_SIZE, { message: `Số khách tối đa ${MAX_PARTY_SIZE} người` })
   partySize?: number;
 
   @IsOptional()

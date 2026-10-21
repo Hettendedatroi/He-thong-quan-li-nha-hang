@@ -16,25 +16,27 @@ import {
 import { ToBoolean } from '../../common/decorators';
 import { PaginationQueryDto } from '../../common/utils/pagination';
 
+export const MAX_REVIEW_COMMENT_LENGTH = 300;
+
 export class CreateDishReviewDto {
   @IsInt()
   orderItemId: number;
 
-  /** FR-16: chấm 1-5 sao (tùy chọn) */
-  @IsOptional()
+  /** FR-16, US-5 AC2: chấm 1-5 sao (bắt buộc) */
   @IsInt()
   @Min(1)
   @Max(5)
-  rating?: number;
+  rating: number;
 
   /** FR-16: LIKE / DISLIKE (tùy chọn) */
   @IsOptional()
   @IsEnum(Reaction)
   reaction?: Reaction;
 
+  /** US-5 AC2: bình luận tối đa 300 ký tự */
   @IsOptional()
   @IsString()
-  @MaxLength(1000)
+  @MaxLength(MAX_REVIEW_COMMENT_LENGTH)
   comment?: string;
 
   /** FR-19 */
@@ -71,10 +73,10 @@ export class CreateFeedbackDto {
   @Max(5)
   ambienceRating?: number;
 
-  /** FR-18 */
+  /** FR-18, US-5 AC2 */
   @IsOptional()
   @IsString()
-  @MaxLength(2000)
+  @MaxLength(MAX_REVIEW_COMMENT_LENGTH)
   comment?: string;
 
   /** FR-18: URL ảnh đã upload qua POST /public/sessions/:token/uploads */
@@ -139,6 +141,12 @@ export class ListDishReviewsQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsInt()
   branchId?: number;
+
+  /** US-20 AC4: chỉ lấy đánh giá bị gắn cờ (≤ 2 sao) */
+  @IsOptional()
+  @ToBoolean()
+  @IsBoolean()
+  flagged?: boolean;
 
   /** FR-MGR-11: lọc theo món */
   @IsOptional()

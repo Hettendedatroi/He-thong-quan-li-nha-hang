@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, HttpException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, Priority, ServiceRequestType } from '@prisma/client';
 import type { AuthUser } from '../common/types/auth-user';
 import { assertBranchAccess, scopeBranch } from '../common/utils/branch-scope';
@@ -20,6 +20,9 @@ const DEFAULT_PRIORITY: Record<ServiceRequestType, Priority> = {
 
 /** Yêu cầu mở quá N phút được đánh dấu quá hạn */
 const OVERDUE_MINUTES = 5;
+
+/** US-3 AC3: khoảng chờ trước khi được gửi lại cùng loại yêu cầu */
+const REPEAT_COOLDOWN_MINUTES = 2;
 
 const INCLUDE = {
   table: { select: { id: true, code: true } },
@@ -45,18 +48,24 @@ export class ServiceRequestsService {
       });
       if (!item) throw new BadRequestException('Món không thuộc bàn của bạn');
     }
-    // Chống bấm liên tục: cùng loại còn mở trong 1 phút => trả lại yêu cầu cũ
+    // US-3 AC3: cùng loại yêu cầu không được gửi lại trong 2 phút
     const dup = await this.prisma.serviceRequest.findFirst({
       where: {
         sessionId: session.id,
         type: dto.type,
         orderItemId: dto.orderItemId ?? null,
-        status: 'OPEN',
-        createdAt: { gte: addMinutes(new Date(), -1) },
+        status: { not: 'CANCELLED' },
+        createdAt: { gte: addMinutes(new Date(), -REPEAT_COOLDOWN_MINUTES) },
       },
-      include: INCLUDE,
+      orderBy: { createdAt: 'desc' },
     });
-    if (dup) return dup;
+    if (dup) {
+      const waitSeconds = Math.ceil((dup.createdAt.getTime() + REPEAT_COOLDOWN_MINUTES * 60_000 - Date.now()) / 1000);
+      throw new HttpException(
+        `Yêu cầu này vừa được gửi, nhân viên đang đến. Vui lòng thử lại sau ${waitSeconds} giây.`,
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
 
     const request = await this.prisma.serviceRequest.create({
       data: {
