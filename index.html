@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bep Nha | Dat ban va goi mon</title>
+    <link rel="stylesheet" href="css/restaurant.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="index.html"
+        ><span class="brand-mark">BN</span
+        ><span><b>BEP NHA</b><small>Quan an gia dinh</small></span></a
+      >
+      <nav>
+        <a class="active" href="index.html">Dat ban</a
+        ><a href="menu.html">Thuc don</a
+        ><a href="admin-dashboard.html">Quan ly</a>
+      </nav>
+      <button class="icon-button" data-theme-toggle aria-label="Doi giao dien">
+        ☼
+      </button>
+    </header>
+    <main class="booking-page">
+      <section class="booking-hero">
+        <div>
+          <span class="eyebrow">Dat ban truc tuyen</span>
+          <h1>Mot bua an ngon<br /><em>bat dau tu mot cho ngoi dep.</em></h1>
+          <p>
+            Chon thoi gian, so khach va mon yeu thich. Bep Nha giu ban trong 15
+            phut sau gio hen.
+          </p>
+          <div class="hero-meta">
+            <span>● Mo cua 10:00 - 22:00</span><span>⌁ 12 Nguyen Hue, Q.1</span>
+          </div>
+        </div>
+        <div class="hero-plate">
+          <span class="plate-ring"></span><span class="plate-food">✦</span
+          ><small>Mon moi moi tuan</small>
+        </div>
+      </section>
+      <section class="booking-layout">
+        <div class="booking-card panel">
+          <div class="section-heading">
+            <div>
+              <span class="eyebrow">01 / Thong tin dat ban</span>
+              <h2>Giu cho cua ban</h2>
+            </div>
+            <span class="step-badge">1 / 2</span>
+          </div>
+          <form id="booking-form">
+            <div class="field-grid">
+              <label>Ngay den<input type="date" name="date" required /></label
+              ><label
+                >Gio den<select name="time">
+                  <option>18:00</option>
+                  <option>18:30</option>
+                  <option>19:00</option>
+                  <option>19:30</option>
+                  <option>20:00</option>
+                </select></label
+              >
+            </div>
+            <label
+              >So luong khach
+              <div class="guest-stepper">
+                <button type="button" data-step="-1">−</button
+                ><strong id="guest-count">2 nguoi</strong
+                ><button type="button" data-step="1">+</button>
+              </div></label
+            >
+            <div class="table-options">
+              <label class="table-option selected"
+                ><input
+                  type="radio"
+                  name="area"
+                  value="Trong nha"
+                  checked
+                /><span class="option-icon">▦</span><b>Trong nha</b
+                ><small>Am cung, may lanh</small></label
+              ><label class="table-option"
+                ><input type="radio" name="area" value="San vuon" /><span
+                  class="option-icon"
+                  >❋</span
+                ><b>San vuon</b><small>Thoang mat, nhieu cay</small></label
+              ><label class="table-option"
+                ><input type="radio" name="area" value="Phong rieng" /><span
+                  class="option-icon"
+                  >◇</span
+                ><b>Phong rieng</b><small>Tu 6 khach tro len</small></label
+              >
+            </div>
+            <div class="field-grid">
+              <label
+                >Ho va ten<input
+                  name="name"
+                  placeholder="Vi du: Nguyen Minh An"
+                  required /></label
+              ><label
+                >So dien thoai<input
+                  name="phone"
+                  placeholder="09xx xxx xxx"
+                  required
+              /></label>
+            </div>
+            <label
+              >Ghi chu cho nha hang<textarea
+                name="note"
+                rows="3"
+                placeholder="Sinh nhat, an chay, di cung tre nho..."
+              ></textarea>
+            </label>
+            <button class="button primary full" type="submit">
+              Xac nhan dat ban <span>→</span>
+            </button>
+          </form>
+        </div>
+        <aside class="booking-side">
+          <div class="mini-panel dark">
+            <span class="eyebrow">Dat mon truoc</span>
+            <h3>Ban muon bua an san sang khi toi?</h3>
+            <p>Chon mon tu thuc don va them vao ghi chu dat ban.</p>
+            <a class="button light" href="menu.html"
+              >Xem thuc don <span>→</span></a
+            >
+          </div>
+          <div class="mini-panel">
+            <span class="eyebrow">Hom nay tai Bep Nha</span>
+            <div class="stat-line"><b>86%</b><span>ban da duoc dat</span></div>
+            <div class="progress"><i style="width: 86%"></i></div>
+            <p class="muted">Con 4 khung gio dep luc 20:00</p>
+          </div>
+        </aside>
+      </section>
+    </main>
+    <div class="toast" id="toast"></div>
+    <script src="js/restaurant.js"></script>
+  </body>
+</html>
