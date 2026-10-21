@@ -88,8 +88,10 @@ export const DEFAULT_SETTINGS: SettingsMap = {
     maxHoldMinutes: 15,
     minAdvanceMinutes: 30,
     maxAdvanceDays: 30,
+    // US-4 AC4: hủy được trước giờ hẹn 2 tiếng
     freeCancelHours: 2,
-    requireManualApproval: false,
+    // US-11, DoD D-02: đặt bàn ở trạng thái Chờ xác nhận, phục vụ xác nhận / từ chối
+    requireManualApproval: true,
     manualApprovalPartySize: 10,
     depositRequired: false,
     depositPartySize: 6,

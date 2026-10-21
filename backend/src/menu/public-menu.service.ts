@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { MenuItem, PriceRule, Promotion } from '@prisma/client';
 import { addDays } from '../common/utils/time';
+import { SettingsService } from '../core/settings.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { PromotionsService } from '../promotions/promotions.service';
 import { localize } from './localize';
@@ -23,12 +24,14 @@ export class PublicMenuService {
     private readonly prisma: PrismaService,
     private readonly pricing: PricingService,
     private readonly promotions: PromotionsService,
+    private readonly settings: SettingsService,
   ) {}
 
-  /** FR-08: menu theo danh mục, có ảnh, mô tả, giá, tình trạng còn hàng */
+  /** FR-08, US-1 AC2: menu theo danh mục, có ảnh, mô tả, giá, tình trạng còn hàng */
   async menu(lang?: string, branchId?: number) {
     const now = new Date();
-    const [categories, holiday, promos, stats, combos] = await Promise.all([
+    const [restaurant, categories, holiday, promos, stats, combos] = await Promise.all([
+      this.restaurantInfo(branchId),
       this.prisma.menuCategory.findMany({
         where: { isActive: true },
         orderBy: { sortOrder: 'asc' },
@@ -48,11 +51,34 @@ export class PublicMenuService {
 
     return {
       generatedAt: now,
+      restaurant,
       categories: categories.map(({ items, ...c }) => ({
         ...localize(c, lang),
         items: items.map((item) => this.presentItem(item, lang, holiday, promos, stats.get(item.id), now)),
       })),
       combos,
+    };
+  }
+
+  /** US-17 AC3: tên, địa chỉ, giờ mở cửa của nhà hàng hiển thị trên trang thực đơn */
+  private async restaurantInfo(branchId?: number) {
+    const [info, branch] = await Promise.all([
+      this.settings.get('restaurant'),
+      branchId
+        ? this.prisma.branch.findUnique({ where: { id: branchId } })
+        : this.prisma.branch.findFirst({ where: { isActive: true }, orderBy: { id: 'asc' } }),
+    ]);
+    return {
+      name: info.name,
+      hotline: info.hotline,
+      logoUrl: info.logoUrl || null,
+      description: info.description || null,
+      branchId: branch?.id ?? null,
+      branchName: branch?.name ?? null,
+      address: branch?.address ?? null,
+      phone: branch?.phone ?? null,
+      openTime: branch?.openTime ?? null,
+      closeTime: branch?.closeTime ?? null,
     };
   }
 

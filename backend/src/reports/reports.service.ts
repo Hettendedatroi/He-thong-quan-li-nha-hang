@@ -33,7 +33,20 @@ export class ReportsService {
       previous = { ...(await this.revenueSummary(prevFrom, from, branchId)), from: prevFrom, to: from };
       growthPercent = previous.revenue ? round(((summary.revenue - previous.revenue) / previous.revenue) * 100) : null;
     }
-    return { from, to, groupBy, branchId: branchId ?? null, summary, previous, growthPercent, series };
+    // US-19 AC4: kỳ không có dữ liệu -> 0 kèm thông báo
+    const hasData = summary.bills > 0;
+    return {
+      from,
+      to,
+      groupBy,
+      branchId: branchId ?? null,
+      hasData,
+      message: hasData ? null : 'Không có dữ liệu',
+      summary,
+      previous,
+      growthPercent,
+      series,
+    };
   }
 
   revenueByPeriod(from: Date, to: Date, branchId: number | undefined, unit: PeriodUnit) {
@@ -232,6 +245,10 @@ export class ReportsService {
     return {
       from,
       to,
+      // US-19 AC4
+      hasData: ordered.length > 0,
+      message: ordered.length ? null : 'Không có dữ liệu',
+      // US-19 AC3: top món theo số lượng bán (mặc định 10) kèm số lượng & doanh thu
       topOrdered: ordered.slice(0, limit),
       mostLiked: [...reviewList].sort((a, b) => b.likes - a.likes || b.orderCount - a.orderCount).slice(0, limit),
       mostReviewed: [...reviewList].sort((a, b) => b.reviews - a.reviews).slice(0, limit),

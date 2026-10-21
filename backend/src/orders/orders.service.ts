@@ -1,5 +1,5 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { OrderItemStatus, OrderSource, Prisma, TableSession } from '@prisma/client';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { CartItem, OrderItemStatus, OrderSource, Prisma, TableSession } from '@prisma/client';
 import { assertBranchAccess, scopeBranch } from '../common/utils/branch-scope';
 import { prefixedCode } from '../common/utils/codes';
 import { paged, toSkipTake } from '../common/utils/pagination';
@@ -8,6 +8,7 @@ import type { AuthUser } from '../common/types/auth-user';
 import { AuditService } from '../core/audit.service';
 import { SettingsService } from '../core/settings.service';
 import { PricingService } from '../menu/pricing.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { PromotionsService } from '../promotions/promotions.service';
 import { RealtimeService } from '../realtime/realtime.service';
@@ -40,6 +41,7 @@ export class OrdersService {
     private readonly settings: SettingsService,
     private readonly realtime: RealtimeService,
     private readonly audit: AuditService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /** Tạo đơn: chốt giá theo thời điểm gọi (giá theo ngày + happy hour) */
@@ -116,10 +118,20 @@ export class OrdersService {
       include: ORDER_INCLUDE,
     });
 
+    // US-9 AC1: bàn chuyển sang Đang có khách khi đơn đầu tiên tới
+    await this.sessions.markOccupied(session.tableId);
+
     // FR-WAT-01: báo phục vụ có đơn mới; FR-KIT-01: đẩy lên KDS
     this.realtime.toBranchStaff(session.branchId, 'order.created', order);
     if (!needsConfirm) this.realtime.toKitchen(session.branchId, 'kitchen.order-received', order);
     this.realtime.toSession(session.token, 'order.created', order);
+    // US-9 AC2: thông báo lưu lại cho phục vụ (danh sách mới nhất trước + bộ đếm chưa đọc)
+    await this.notifications.notifyBranchStaff(session.branchId, 'STAFF_NEW_ORDER', {
+      table: order.table.code,
+      code: order.code,
+      count: order.items.reduce((s, i) => s + i.quantity, 0),
+      source: opts.source === 'WAITER' ? 'phục vụ tạo' : 'khách gọi qua QR',
+    }, { orderId: order.id, tableId: order.table.id, event: 'NEW_ORDER' });
     if (opts.createdById) {
       await this.audit.log({ userId: opts.createdById, action: 'order.create', entity: 'Order', entityId: order.id });
     }
@@ -131,9 +143,14 @@ export class OrdersService {
     const session = await this.sessions.getByToken(token);
     let inputs = dto.items ?? [];
     const fromCart = !inputs.length;
+    let claimed: CartItem[] = [];
     if (fromCart) {
       const cart = await this.prisma.cartItem.findMany({ where: { sessionId: session.id }, orderBy: { id: 'asc' } });
       if (!cart.length) throw new BadRequestException('Giỏ hàng đang trống');
+      // DoD B-06: "giành" giỏ hàng trước khi tạo đơn để bấm gửi 2 lần cùng lúc không sinh 2 đơn trùng
+      const taken = await this.prisma.cartItem.deleteMany({ where: { id: { in: cart.map((c) => c.id) } } });
+      if (taken.count !== cart.length) throw new ConflictException('Đơn đang được gửi, vui lòng đợi trong giây lát');
+      claimed = cart;
       inputs = cart.map((c) => ({
         menuItemId: c.menuItemId ?? undefined,
         comboId: c.comboId ?? undefined,
@@ -141,21 +158,43 @@ export class OrdersService {
         note: c.note ?? undefined,
       }));
     }
-    const order = await this.createOrder(session, inputs, {
-      source: 'QR',
-      customerId: user?.roleCode === 'CUSTOMER' ? user.id : undefined,
-      note: dto.note,
-    });
-    if (fromCart) {
-      await this.prisma.cartItem.deleteMany({ where: { sessionId: session.id } });
-      this.realtime.toSession(session.token, 'cart.updated', { items: [] });
+    let order: Awaited<ReturnType<OrdersService['createOrder']>>;
+    try {
+      order = await this.createOrder(session, inputs, {
+        source: 'QR',
+        customerId: user?.roleCode === 'CUSTOMER' ? user.id : undefined,
+        note: dto.note,
+      });
+    } catch (err) {
+      // Đơn không hợp lệ (vd món vừa hết) -> trả lại giỏ hàng như cũ
+      if (claimed.length) {
+        await this.prisma.cartItem.createMany({
+          data: claimed.map(({ id: _id, ...c }) => c),
+        });
+      }
+      throw err;
     }
+    if (fromCart) this.realtime.toSession(session.token, 'cart.updated', { items: [], total: 0 });
     return order;
   }
 
-  /** FR-WAT-06: phục vụ gọi món hộ khách */
-  async createByStaff(user: AuthUser, sessionId: number, inputs: OrderItemInputDto[], note?: string, priority?: number) {
-    const session = await this.sessions.getOpenById(sessionId);
+  /** FR-WAT-06, US-10 AC1: phục vụ chọn bàn (hoặc phiên bàn đang mở) và gọi món hộ khách */
+  async createByStaff(
+    user: AuthUser,
+    target: { sessionId?: number; tableId?: number },
+    inputs: OrderItemInputDto[],
+    note?: string,
+    priority?: number,
+  ) {
+    if (!target.sessionId && !target.tableId) throw new BadRequestException('Vui lòng chọn bàn');
+    let session: TableSession;
+    if (target.sessionId) {
+      session = await this.sessions.getOpenById(target.sessionId);
+    } else {
+      const table = await this.sessions.resolvePrimaryTable(target.tableId!);
+      assertBranchAccess(user, table.branchId);
+      ({ session } = await this.sessions.openForTable(table.id, { openedById: user.id, occupy: false }));
+    }
     assertBranchAccess(user, session.branchId);
     return this.createOrder(session, inputs, { source: 'WAITER', createdById: user.id, note, priority });
   }
@@ -263,8 +302,36 @@ export class OrdersService {
       data: { status: 'SERVED', servedAt: new Date() },
     });
     await refreshOrderStatus(this.prisma, item.orderId);
+    // DoD B-05: ghi lại người & thời điểm đổi trạng thái
+    await this.audit.log({ userId: user.id, action: 'order_item.status', entity: 'OrderItem', entityId: itemId, data: { from: 'READY', to: 'SERVED' } });
     this.emitItem(item.order, updated);
     return updated;
+  }
+
+  /** US-9 AC3: phục vụ đánh dấu cả đơn Sẵn sàng là Đã phục vụ, trang trạng thái của khách cập nhật */
+  async markOrderServed(user: AuthUser, orderId: number) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { items: true, table: { select: { id: true, code: true } }, session: { select: { token: true } } },
+    });
+    if (!order) throw new NotFoundException('Không tìm thấy đơn');
+    assertBranchAccess(user, order.branchId);
+    const ready = order.items.filter((i) => i.status === 'READY');
+    if (!ready.length) throw new BadRequestException('Đơn chưa có món nào ở trạng thái Sẵn sàng');
+    const now = new Date();
+    for (const i of ready) {
+      const updated = await this.prisma.orderItem.update({ where: { id: i.id }, data: { status: 'SERVED', servedAt: now } });
+      this.emitItem(order, updated);
+    }
+    await refreshOrderStatus(this.prisma, orderId);
+    await this.audit.log({
+      userId: user.id,
+      action: 'order.status',
+      entity: 'Order',
+      entityId: orderId,
+      data: { to: 'SERVED', items: ready.map((i) => i.id) },
+    });
+    return this.get(user, orderId);
   }
 
   async getItem(itemId: number) {

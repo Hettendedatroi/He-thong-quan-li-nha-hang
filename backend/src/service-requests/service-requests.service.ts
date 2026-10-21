@@ -3,6 +3,7 @@ import { Prisma, Priority, ServiceRequestType } from '@prisma/client';
 import type { AuthUser } from '../common/types/auth-user';
 import { assertBranchAccess, scopeBranch } from '../common/utils/branch-scope';
 import { addMinutes } from '../common/utils/time';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { TableSessionsService } from '../tables/table-sessions.service';
@@ -16,6 +17,15 @@ const DEFAULT_PRIORITY: Record<ServiceRequestType, Priority> = {
   CALL_STAFF: 'HIGH',
   MORE_ITEMS: 'NORMAL',
   OTHER: 'NORMAL',
+};
+
+const REQUEST_LABEL: Record<ServiceRequestType, string> = {
+  CALL_STAFF: 'Gọi nhân viên',
+  REQUEST_BILL: 'Yêu cầu thanh toán',
+  MORE_ITEMS: 'Gọi thêm món',
+  CHANGE_ITEM: 'Đổi món',
+  CANCEL_ITEM: 'Hủy món',
+  OTHER: 'Yêu cầu khác',
 };
 
 /** Yêu cầu mở quá N phút được đánh dấu quá hạn */
@@ -36,6 +46,7 @@ export class ServiceRequestsService {
     private readonly prisma: PrismaService,
     private readonly sessions: TableSessionsService,
     private readonly realtime: RealtimeService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /** FR-13: khách gửi yêu cầu nhanh */
@@ -81,6 +92,13 @@ export class ServiceRequestsService {
     });
     // FR-WAT-01: popup + âm thanh trên máy phục vụ
     this.realtime.toBranchStaff(session.branchId, 'service-request.created', request);
+    // US-9 AC2: lưu thông báo cho phục vụ (danh sách + bộ đếm chưa đọc)
+    await this.notifications.notifyBranchStaff(
+      session.branchId,
+      'STAFF_SERVICE_REQUEST',
+      { table: request.table.code, type: REQUEST_LABEL[dto.type], message: dto.message ?? '' },
+      { serviceRequestId: request.id, tableId: request.table.id, event: 'SERVICE_REQUEST', requestType: dto.type },
+    );
     return request;
   }
 

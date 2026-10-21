@@ -114,9 +114,16 @@ export class BranchesService {
 
   /** Xóa mềm nếu bàn đã có lịch sử (để giữ dữ liệu báo cáo) */
   async deleteTable(actorId: number, id: number) {
-    // US-17 AC4: bàn đang có khách / hóa đơn chưa thanh toán thì không được xóa
-    const open = await this.prisma.tableSession.count({ where: { tableId: id, status: 'OPEN' } });
-    if (open) throw new ConflictException('Bàn đang có đơn chưa thanh toán, không thể xóa');
+    // US-17 AC4: bàn có đơn chưa thanh toán thì không được xóa
+    const unpaid = await this.prisma.tableSession.count({
+      where: { tableId: id, status: 'OPEN', orders: { some: { status: { not: 'CANCELLED' } } } },
+    });
+    if (unpaid) throw new ConflictException('Bàn đang có đơn chưa thanh toán, không thể xóa');
+    // Phiên mở do khách quét QR nhưng chưa gọi món -> đóng lại
+    await this.prisma.tableSession.updateMany({
+      where: { tableId: id, status: 'OPEN' },
+      data: { status: 'CLOSED', closedAt: new Date() },
+    });
     const used = await this.prisma.tableSession.count({ where: { tableId: id } });
     if (used) {
       await this.prisma.diningTable.update({ where: { id }, data: { isActive: false } });

@@ -5,6 +5,8 @@
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
+    "quickstart": "npm install && npm run setup:env && docker compose up -d --wait db && prisma migrate deploy && prisma db seed && nest start --watch",
+    "setup:env": "node -e \"const f=require('fs');if(!f.existsSync('.env')){f.copyFileSync('.env.example','.env');console.log('Đã tạo .env từ .env.example')}\"",
     "postinstall": "prisma generate",
     "build": "nest build",
     "start": "nest start",

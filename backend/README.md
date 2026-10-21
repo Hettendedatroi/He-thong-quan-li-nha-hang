@@ -22,7 +22,18 @@ Backend cho **Hệ thống Quản lý Nhà hàng (Group 4)** theo tài liệu SR
 
 > **Lưu ý trên Windows:** nên đặt project ngoài thư mục OneDrive (ví dụ `C:\dev\...`). OneDrive sẽ cố đồng bộ hàng trăm MB `node_modules`, làm chậm máy và dễ khóa file khi `npm install`.
 
-### Các bước
+### Chạy nhanh bằng một lệnh (US-15 AC1)
+
+Mở Docker Desktop, rồi:
+
+```bash
+cd backend
+npm run quickstart
+```
+
+Lệnh này tự làm đủ các bước bên dưới: cài thư viện → tạo `.env` từ `.env.example` (nếu chưa có) → bật PostgreSQL và đợi sẵn sàng → chạy migration → nạp dữ liệu mẫu → chạy server ở chế độ dev. Chạy lại nhiều lần không sao: seed không nhân đôi dữ liệu.
+
+### Hoặc làm từng bước
 
 ```bash
 cd backend
@@ -160,7 +171,7 @@ Server tự cho client vào đúng "phòng" theo vai trò. Quản lý cấp chu�
 | `bill.updated` | Phục vụ, khách tại bàn | Tạo / tách / thanh toán hóa đơn |
 | `session.closed`, `session.merged`, `session.moved` | Khách tại bàn | Kết thúc / gộp / chuyển bàn |
 | `feedback.created`, `feedback.dish-review` | Phục vụ, quản lý | Có đánh giá mới (FR-WAT-05) |
-| `notification` | Người dùng | Thông báo cá nhân (FR-21..24) |
+| `notification` | Người dùng | Thông báo cá nhân (FR-21..24). Phục vụ nhận thêm `STAFF_NEW_ORDER`, `STAFF_SERVICE_REQUEST`, `STAFF_ORDER_READY` (US-9 AC2), đồng thời được lưu lại: `GET /api/me/notifications` (mới nhất trước), `GET /api/me/notifications/unread-count` |
 | `incident.created`, `shift-report.submitted` | Phục vụ, quản lý | Sự cố / báo cáo cuối ca |
 | `device.status` | Admin | Thiết bị online / offline (FR-ADM-11) |
 
@@ -168,13 +179,17 @@ Server tự cho client vào đúng "phòng" theo vai trò. Quản lý cấp chu�
 
 ## 5. Luồng nghiệp vụ chính
 
-1. **Đặt bàn:** `GET /public/reservations/availability` → `POST /public/reservations` → (nếu cần cọc) `POST /public/reservations/{code}/deposit` → khách nhận mã + QR.
-2. **Khách đến:** phục vụ quét QR → `POST /reservations/check-in` → hệ thống mở phiên bàn.
-3. **Gọi món:** khách quét QR trên bàn → thêm giỏ → `POST /public/sessions/{token}/orders`; hoặc phục vụ gọi hộ `POST /orders`.
-4. **Bếp:** `GET /kitchen/queue` → `PATCH /kitchen/items/{id}/status` (RECEIVED → PREPARING → READY → SERVED).
-5. **Thanh toán:** `POST /bills` (voucher, điểm, giảm giá đặc biệt) → `POST /bills/{id}/split` (tùy chọn) → `POST /bills/{id}/payments`. Thanh toán đủ thì phiên đóng, bàn chuyển sang *Đang dọn*.
-6. **Dọn bàn:** `PATCH /tables/{id}/status` → `READY`.
-7. **Đánh giá:** `POST /public/sessions/{token}/feedback` (mỗi hóa đơn 1 lần) và `/dish-reviews`.
+Trạng thái bàn (US-9): `AVAILABLE` (Trống), `OCCUPIED` (Đang có khách), `RESERVED` (Đã đặt), `CLEANING` (Đang dọn dẹp).
+
+1. **Đặt bàn:** `GET /public/reservations/availability` → `POST /public/reservations`. Khách nhận mã + QR, đặt bàn ở trạng thái **Chờ xác nhận**. Hết bàn thì API trả 409 kèm `alternatives.timeSlots`.
+2. **Phục vụ duyệt:** `GET /reservations?status=PENDING` → `POST /reservations/{id}/confirm` hoặc `/reject` (kèm lý do).
+3. **Khách đến:** phục vụ quét mã đặt chỗ → `POST /reservations/check-in` → bàn chuyển **Đang có khách**.
+4. **Gọi món:** khách quét QR trên bàn (bàn **vẫn Trống**) → thêm giỏ → `POST /public/sessions/{token}/orders`; hoặc phục vụ gọi hộ `POST /orders` với `tableId`. **Đơn đầu tiên** chuyển bàn sang Đang có khách.
+5. **Bếp:** `GET /kitchen/queue` (cũ nhất trước) → `POST /kitchen/orders/{id}/status` (RECEIVED → PREPARING → READY).
+6. **Phục vụ mang món:** `POST /orders/{id}/serve` → Đã phục vụ.
+7. **Thanh toán:** `POST /bills` → (tùy chọn) `POST /bills/{id}/split` → `POST /bills/{id}/payments`. Thanh toán đủ thì bàn chuyển sang **Đang dọn dẹp**.
+8. **Dọn bàn:** `PATCH /tables/{id}/status` với `AVAILABLE` → Trống.
+9. **Đánh giá:** `POST /public/sessions/{token}/dish-reviews` và `/feedback` (chỉ sau khi đã thanh toán, mỗi hóa đơn 1 lần).
 
 Bảng ánh xạ đầy đủ từng yêu cầu SRS sang API: xem [docs/FR_TRACEABILITY.md](docs/FR_TRACEABILITY.md).
 

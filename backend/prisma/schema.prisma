@@ -26,13 +26,12 @@ enum AuthProvider {
   FACEBOOK
 }
 
-/// FR-WAT-02: trạng thái bàn trên sơ đồ
+/// FR-WAT-02, US-9 AC1: Trống / Đang có khách / Đã đặt / Đang dọn dẹp
 enum TableStatus {
   AVAILABLE
   OCCUPIED
   RESERVED
   CLEANING
-  READY
 }
 
 enum ReservationStatus {

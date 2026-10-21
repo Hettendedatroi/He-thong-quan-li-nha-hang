@@ -11,6 +11,12 @@ services:
       - '5432:5432'
     volumes:
       - pgdata:/var/lib/postgresql/data
+    # Để `docker compose up --wait` (npm run quickstart) đợi tới khi DB nhận kết nối
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U restaurant -d restaurant_db']
+      interval: 2s
+      timeout: 3s
+      retries: 30
 
 volumes:
   pgdata:
