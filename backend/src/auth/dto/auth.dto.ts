@@ -22,9 +22,9 @@ export class RegisterDto {
   @MaxLength(100)
   fullName: string;
 
-  @IsOptional()
-  @IsEmail()
-  email?: string;
+  /** US-6 AC1: email là bắt buộc và duy nhất */
+  @IsEmail({}, { message: 'Email không hợp lệ' })
+  email: string;
 
   @IsOptional()
   @Matches(PHONE_REGEX, { message: 'Số điện thoại không hợp lệ' })

@@ -26,6 +26,12 @@ export class MyNotificationsController {
     return this.notifications.listForUser(user.id, q.unreadOnly);
   }
 
+  /** US-9 AC2: số thông báo chưa đọc (huy hiệu trên màn hình phục vụ) */
+  @Get('notifications/unread-count')
+  unreadCount(@CurrentUser() user: AuthUser) {
+    return this.notifications.unreadCount(user.id);
+  }
+
   @Patch('notifications/:id/read')
   markRead(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number) {
     return this.notifications.markRead(user.id, id);

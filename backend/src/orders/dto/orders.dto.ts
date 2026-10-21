@@ -59,8 +59,15 @@ export class CreateCustomerOrderDto {
 }
 
 export class CreateStaffOrderDto {
+  /** US-10 AC1: chọn bàn (hệ thống tự mở phiên nếu bàn chưa có) */
+  @IsOptional()
   @IsInt()
-  sessionId: number;
+  tableId?: number;
+
+  /** Hoặc truyền phiên bàn đang mở */
+  @IsOptional()
+  @IsInt()
+  sessionId?: number;
 
   @ApiProperty({ type: () => OrderItemInputDto, isArray: true })
   @IsArray()

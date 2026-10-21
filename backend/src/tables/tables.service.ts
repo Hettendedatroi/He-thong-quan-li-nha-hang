@@ -10,12 +10,14 @@ import { RealtimeService } from '../realtime/realtime.service';
 import { MergeTablesDto } from './dto/tables.dto';
 import { TableSessionsService } from './table-sessions.service';
 
-/** Trạng thái bàn được phép đổi thủ công (OCCUPIED chỉ đổi qua mở / đóng phiên) */
+/**
+ * Trạng thái bàn được phép đổi thủ công. US-9 AC1, DoD A-05: Đang dọn dẹp -> Trống.
+ * OCCUPIED chỉ đổi qua đơn đầu tiên / check-in (vào) và thanh toán (ra -> Đang dọn dẹp).
+ */
 const ALLOWED_TRANSITIONS: Record<TableStatus, TableStatus[]> = {
   AVAILABLE: ['RESERVED', 'CLEANING'],
-  READY: ['AVAILABLE', 'RESERVED', 'CLEANING'],
-  RESERVED: ['AVAILABLE', 'READY', 'CLEANING'],
-  CLEANING: ['READY', 'AVAILABLE'],
+  RESERVED: ['AVAILABLE', 'CLEANING'],
+  CLEANING: ['AVAILABLE'],
   OCCUPIED: [],
 };
 
@@ -65,7 +67,7 @@ export class TablesService {
     const nextReservation = new Map<number, (typeof reservations)[number]>();
     for (const r of reservations) if (r.tableId && !nextReservation.has(r.tableId)) nextReservation.set(r.tableId, r);
     const leadLimit = addMinutes(now, policy.reservedLeadMinutes);
-    const summary: Record<string, number> = { AVAILABLE: 0, OCCUPIED: 0, RESERVED: 0, CLEANING: 0, READY: 0 };
+    const summary: Record<string, number> = { AVAILABLE: 0, OCCUPIED: 0, RESERVED: 0, CLEANING: 0 };
 
     const result = zones.map((zone) => ({
       id: zone.id,
@@ -76,7 +78,8 @@ export class TablesService {
         const next = nextReservation.get(t.id);
         let displayStatus: TableStatus = t.status;
         if (t.mergedIntoId) displayStatus = 'OCCUPIED';
-        else if ((t.status === 'AVAILABLE' || t.status === 'READY') && next && next.startAt <= leadLimit) {
+        // US-9 AC4: bàn sắp tới giờ đặt hiển thị Đã đặt kèm giờ & tên khách
+        else if (t.status === 'AVAILABLE' && next && next.startAt <= leadLimit) {
           displayStatus = 'RESERVED';
         }
         summary[displayStatus]++;
@@ -111,19 +114,23 @@ export class TablesService {
     return { branchId, generatedAt: now, summary, zones: result };
   }
 
-  /** FR-WAT-11: cập nhật trạng thái bàn (vd: Đang dọn -> Sẵn sàng) */
+  /** FR-WAT-11, US-9 AC1: cập nhật trạng thái bàn (vd: Đang dọn dẹp -> Trống) */
   async updateStatus(user: AuthUser, tableId: number, status: TableStatus) {
     const table = await this.prisma.diningTable.findUnique({ where: { id: tableId } });
     if (!table) throw new NotFoundException('Không tìm thấy bàn');
     assertBranchAccess(user, table.branchId);
     if (table.status === status) return table;
-    if (status === 'OCCUPIED') throw new BadRequestException('Hãy mở phiên bàn để chuyển sang trạng thái Có khách');
-    if (table.status === 'OCCUPIED' || (await this.sessions.findOpenSession(tableId))) {
-      throw new ConflictException('Bàn đang có khách, cần thanh toán / đóng phiên trước');
+    if (status === 'OCCUPIED') {
+      throw new BadRequestException('Bàn tự chuyển sang Đang có khách khi có đơn đầu tiên hoặc khi check-in');
+    }
+    if (table.status === 'OCCUPIED' || (await this.sessions.findOpenSessionWithOrders(tableId))) {
+      throw new ConflictException('Bàn đang có khách, cần thanh toán trước');
     }
     if (!ALLOWED_TRANSITIONS[table.status].includes(status)) {
       throw new BadRequestException(`Không thể chuyển từ ${table.status} sang ${status}`);
     }
+    // Phiên mở do khách quét QR nhưng chưa gọi món thì đóng lại
+    await this.sessions.closeEmptySessions(tableId);
     const updated = await this.prisma.diningTable.update({ where: { id: tableId }, data: { status } });
     await this.sessions.emitTable(tableId);
     return updated;

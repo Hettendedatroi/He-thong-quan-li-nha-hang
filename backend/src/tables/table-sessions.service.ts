@@ -22,9 +22,14 @@ export interface OpenSessionOptions {
   customerId?: number | null;
   reservationId?: number | null;
   openedById?: number | null;
+  /**
+   * true: chuyển bàn sang Đang có khách ngay (nhân viên xếp khách, check-in đặt bàn - US-11 AC3).
+   * false: chỉ mở phiên; bàn chuyển Đang có khách khi đơn đầu tiên được gửi (US-9 AC1) - dùng khi khách quét QR.
+   */
+  occupy?: boolean;
 }
 
-const SEATABLE: TableStatus[] = ['AVAILABLE', 'READY', 'RESERVED'];
+const SEATABLE: TableStatus[] = ['AVAILABLE', 'RESERVED'];
 
 /**
  * Phiên bàn = một lượt khách ngồi tại bàn. Mọi order, yêu cầu phục vụ, hóa đơn đều gắn vào phiên.
@@ -54,23 +59,22 @@ export class TableSessionsService {
   }
 
   async openForTable(tableId: number, opts: OpenSessionOptions = {}) {
+    const occupy = opts.occupy ?? true;
     const table = await this.resolvePrimaryTable(tableId);
     const existing = await this.findOpenSession(table.id);
     if (existing) {
+      let session = existing;
       if (opts.customerId && !existing.customerId) {
-        const updated = await this.prisma.tableSession.update({
+        session = await this.prisma.tableSession.update({
           where: { id: existing.id },
           data: { customerId: opts.customerId },
         });
-        return { session: updated, table, created: false };
       }
-      return { session: existing, table, created: false };
+      const status = occupy ? await this.markOccupied(table.id) : table.status;
+      return { session, table: { ...table, status }, created: false };
     }
     if (table.status === 'CLEANING') {
       throw new ConflictException(`Bàn ${table.code} đang được dọn dẹp, vui lòng đợi nhân viên`);
-    }
-    if (!SEATABLE.includes(table.status) && table.status !== 'OCCUPIED') {
-      throw new ConflictException(`Bàn ${table.code} chưa sẵn sàng`);
     }
 
     // Khóa theo bàn để 2 người quét QR cùng lúc không tạo 2 phiên
@@ -89,7 +93,7 @@ export class TableSessionsService {
           openedById: opts.openedById ?? null,
         },
       });
-      await tx.diningTable.update({ where: { id: table.id }, data: { status: 'OCCUPIED' } });
+      if (occupy) await tx.diningTable.update({ where: { id: table.id }, data: { status: 'OCCUPIED' } });
       return created;
     });
 
@@ -99,8 +103,33 @@ export class TableSessionsService {
       tableCode: table.code,
       guestCount: session.guestCount,
     });
-    await this.emitTable(table.id);
-    return { session, table: { ...table, status: 'OCCUPIED' as TableStatus }, created: true };
+    if (occupy) await this.emitTable(table.id);
+    return { session, table: { ...table, status: occupy ? ('OCCUPIED' as TableStatus) : table.status }, created: true };
+  }
+
+  /** US-9 AC1: chuyển bàn sang Đang có khách (khi đơn đầu tiên tới / nhân viên xếp khách) */
+  async markOccupied(tableId: number): Promise<TableStatus> {
+    const r = await this.prisma.diningTable.updateMany({
+      where: { id: tableId, status: { not: 'OCCUPIED' } },
+      data: { status: 'OCCUPIED' },
+    });
+    if (r.count) await this.emitTable(tableId);
+    return 'OCCUPIED';
+  }
+
+  /** Phiên đang mở có ít nhất 1 đơn (= bàn thực sự có khách đang dùng) */
+  async findOpenSessionWithOrders(tableId: number) {
+    return this.prisma.tableSession.findFirst({
+      where: { tableId, status: 'OPEN', orders: { some: {} } },
+    });
+  }
+
+  /** Đóng phiên mở nhưng chưa gọi món nào (vd khách quét QR rồi bỏ đi) */
+  async closeEmptySessions(tableId: number) {
+    await this.prisma.tableSession.updateMany({
+      where: { tableId, status: 'OPEN', orders: { none: {} } },
+      data: { status: 'CLOSED', closedAt: new Date() },
+    });
   }
 
   /** FR-07: khách quét QR tại bàn -> nhận token phiên để xem menu & gọi món */
@@ -108,7 +137,8 @@ export class TableSessionsService {
     const scanned = await this.prisma.diningTable.findUnique({ where: { qrToken }, include: { branch: true } });
     if (!scanned || !scanned.isActive || !scanned.branch.isActive) throw new NotFoundException('Mã QR không hợp lệ');
     const customerId = user?.roleCode === 'CUSTOMER' ? user.id : undefined;
-    const { session, table } = await this.openForTable(scanned.id, { customerId });
+    // US-9 AC1: quét QR chỉ mở phiên; bàn chuyển Đang có khách khi đơn đầu tiên tới
+    const { session, table } = await this.openForTable(scanned.id, { customerId, occupy: false });
     return {
       sessionToken: session.token,
       sessionId: session.id,
@@ -149,6 +179,8 @@ export class TableSessionsService {
         orders: {
           orderBy: { createdAt: 'asc' },
           include: {
+            // US-10 AC4: đơn "Do nhân viên phục vụ tạo" kèm tên
+            createdBy: { select: { id: true, fullName: true } },
             items: {
               orderBy: { id: 'asc' },
               include: { menuItem: { select: { imageUrl: true } }, dishReview: { select: { id: true } } },
@@ -229,9 +261,10 @@ export class TableSessionsService {
     if (!to || !to.isActive || to.branchId !== session.branchId) throw new BadRequestException('Bàn đích không hợp lệ');
     if (to.id === session.tableId) throw new BadRequestException('Bàn đích trùng bàn hiện tại');
     if (to.mergedIntoId) throw new ConflictException('Bàn đích đang được gộp vào bàn khác');
-    if (!SEATABLE.includes(to.status) || (await this.findOpenSession(to.id))) {
+    if (!SEATABLE.includes(to.status) || (await this.findOpenSessionWithOrders(to.id))) {
       throw new ConflictException(`Bàn ${to.code} đang không trống`);
     }
+    await this.closeEmptySessions(to.id);
     const fromTableId = session.tableId;
     await this.prisma.$transaction([
       this.prisma.tableSession.update({ where: { id: sessionId }, data: { tableId: to.id } }),

@@ -140,10 +140,20 @@ export class BillsService {
     });
 
     const bill = await this.prisma.$transaction(async (tx) => {
+      // DoD B-06: khóa theo phiên bàn để 2 lần bấm "Lập hóa đơn" đồng thời không tạo 2 hóa đơn
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(3, ${session.id}::int)::text`;
+      const current = await tx.bill.findMany({ where: { sessionId: session.id } });
+      if (current.some((b) => b.status === 'PAID' || b.status === 'REFUNDED')) {
+        throw new ConflictException('Bàn này đã thanh toán');
+      }
+      const stillActive = current.filter((b) => b.status === 'OPEN' || b.status === 'SPLIT');
+      if (stillActive.some((b) => b.status === 'SPLIT' || b.paidAmount > 0)) {
+        throw new ConflictException('Hóa đơn đã được tách hoặc đã thu tiền một phần, không thể tạo lại');
+      }
       // Hóa đơn tạm chưa thu tiền => xóa để tạo lại theo dữ liệu mới
-      if (active.length) {
-        await tx.bill.deleteMany({ where: { parentBillId: { in: active.map((b) => b.id) } } });
-        await tx.bill.deleteMany({ where: { id: { in: active.map((b) => b.id) } } });
+      if (stillActive.length) {
+        await tx.bill.deleteMany({ where: { parentBillId: { in: stillActive.map((b) => b.id) } } });
+        await tx.bill.deleteMany({ where: { id: { in: stillActive.map((b) => b.id) } } });
       }
       if (customer && !session.customerId) {
         await tx.tableSession.update({ where: { id: session.id }, data: { customerId: customer.id } });
@@ -317,25 +327,30 @@ export class BillsService {
 
   /** FR-WAT-14: xác nhận thanh toán (tiền mặt, chuyển khoản, ví điện tử, POS) */
   async pay(user: AuthUser, billId: number, dto: PayBillDto) {
-    const bill = await this.prisma.bill.findUnique({ where: { id: billId } });
-    if (!bill) throw new NotFoundException('Không tìm thấy hóa đơn');
-    assertBranchAccess(user, bill.branchId);
-    if (bill.status === 'SPLIT') throw new BadRequestException('Hóa đơn đã tách, hãy thanh toán từng hóa đơn con');
-    if (bill.status !== 'OPEN') throw new BadRequestException('Hóa đơn không ở trạng thái chờ thanh toán');
+    const found = await this.prisma.bill.findUnique({ where: { id: billId } });
+    if (!found) throw new NotFoundException('Không tìm thấy hóa đơn');
+    assertBranchAccess(user, found.branchId);
     const methods = await this.settings.get('paymentMethods');
     if (!methods[dto.method]) throw new BadRequestException('Phương thức thanh toán này chưa được bật');
-
-    const remaining = bill.total - bill.paidAmount;
-    if (dto.method !== 'CASH' && dto.amount > remaining) {
-      throw new BadRequestException(`Số tiền vượt quá số còn phải trả (${remaining})`);
-    }
-    const payAmount = Math.min(dto.amount, remaining);
-    const change = dto.method === 'CASH' ? dto.amount - payAmount : 0;
     const now = new Date();
-    const fullyPaid = bill.paidAmount + payAmount >= bill.total;
 
-    await this.prisma.$transaction([
-      this.prisma.payment.create({
+    // DoD B-06: khóa theo phiên bàn - 2 lần bấm "Xác nhận thanh toán" đồng thời không thu tiền 2 lần
+    const { bill, payAmount, change, fullyPaid, rootPaid } = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(3, ${found.sessionId}::int)::text`;
+      const bill = await tx.bill.findUniqueOrThrow({ where: { id: billId } });
+      if (bill.status === 'SPLIT') throw new BadRequestException('Hóa đơn đã tách, hãy thanh toán từng hóa đơn con');
+      // US-8 AC3: hóa đơn Đã thanh toán không sửa / thu thêm được
+      if (bill.status !== 'OPEN') throw new BadRequestException('Hóa đơn không ở trạng thái chờ thanh toán');
+
+      const remaining = bill.total - bill.paidAmount;
+      if (dto.method !== 'CASH' && dto.amount > remaining) {
+        throw new BadRequestException(`Số tiền vượt quá số còn phải trả (${remaining})`);
+      }
+      const payAmount = Math.min(dto.amount, remaining);
+      const change = dto.method === 'CASH' ? dto.amount - payAmount : 0;
+      const fullyPaid = bill.paidAmount + payAmount >= bill.total;
+
+      await tx.payment.create({
         data: {
           billId,
           method: dto.method,
@@ -347,27 +362,28 @@ export class BillsService {
           receivedById: user.id,
           completedAt: now,
         },
-      }),
-      this.prisma.bill.update({
+      });
+      const updated = await tx.bill.update({
         where: { id: billId },
         data: { paidAmount: { increment: payAmount }, ...(fullyPaid ? { status: 'PAID', paidAt: now } : {}) },
-      }),
-    ]);
+      });
 
-    let rootPaid: Bill | null = null;
-    if (fullyPaid) {
-      if (bill.parentBillId) {
-        const siblings = await this.prisma.bill.findMany({ where: { parentBillId: bill.parentBillId } });
-        if (siblings.every((s) => s.status === 'PAID')) {
-          rootPaid = await this.prisma.bill.update({
-            where: { id: bill.parentBillId },
-            data: { status: 'PAID', paidAt: now, paidAmount: siblings.reduce((s, b) => s + b.paidAmount, 0) },
-          });
+      let rootPaid: Bill | null = null;
+      if (fullyPaid) {
+        if (bill.parentBillId) {
+          const siblings = await tx.bill.findMany({ where: { parentBillId: bill.parentBillId } });
+          if (siblings.every((s) => s.status === 'PAID')) {
+            rootPaid = await tx.bill.update({
+              where: { id: bill.parentBillId },
+              data: { status: 'PAID', paidAt: now, paidAmount: siblings.reduce((s, b) => s + b.paidAmount, 0) },
+            });
+          }
+        } else {
+          rootPaid = updated;
         }
-      } else {
-        rootPaid = await this.prisma.bill.findUniqueOrThrow({ where: { id: billId } });
       }
-    }
+      return { bill, payAmount, change, fullyPaid, rootPaid };
+    });
     if (rootPaid) await this.finalize(rootPaid);
 
     await this.audit.log({

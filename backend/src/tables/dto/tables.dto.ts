@@ -18,7 +18,7 @@ export class FloorPlanQueryDto {
 }
 
 export class UpdateTableStatusDto {
-  /** FR-WAT-11: vd CLEANING -> READY */
+  /** FR-WAT-11, US-9 AC1: vd CLEANING (Đang dọn dẹp) -> AVAILABLE (Trống) */
   @IsEnum(TableStatus)
   status: TableStatus;
 }

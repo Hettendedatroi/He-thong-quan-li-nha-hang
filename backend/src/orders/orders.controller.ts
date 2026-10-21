@@ -92,17 +92,30 @@ export class OrdersController {
     return this.orders.list(user, q);
   }
 
-  /** FR-WAT-06: gọi món hộ khách */
+  /** FR-WAT-06, US-10: gọi món hộ khách (truyền tableId hoặc sessionId) */
   @Post()
   @RequirePermissions(PERMISSIONS.ORDER_CREATE)
   create(@CurrentUser() user: AuthUser, @Body() dto: CreateStaffOrderDto) {
-    return this.orders.createByStaff(user, dto.sessionId, dto.items, dto.note, dto.priority);
+    return this.orders.createByStaff(
+      user,
+      { sessionId: dto.sessionId, tableId: dto.tableId },
+      dto.items,
+      dto.note,
+      dto.priority,
+    );
   }
 
   @Get(':id')
   @RequirePermissions(PERMISSIONS.ORDER_VIEW)
   get(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number) {
     return this.orders.get(user, id);
+  }
+
+  /** US-9 AC3: đánh dấu cả đơn Sẵn sàng -> Đã phục vụ */
+  @Post(':id/serve')
+  @RequirePermissions(PERMISSIONS.ORDER_MANAGE)
+  serve(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number) {
+    return this.orders.markOrderServed(user, id);
   }
 
   /** FR-WAT-10 */

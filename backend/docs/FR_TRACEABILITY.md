@@ -49,7 +49,7 @@ Trong code, các hàm / route liên quan đều có comment `FR-xx` để tra c�
 | FR-WAT-08 | Xác nhận / từ chối đặt bàn | `POST /reservations/{id}/confirm`, `/reject` |
 | FR-WAT-09 | Check-in bằng mã hoặc thủ công | `POST /reservations/check-in` `{ code }`, `POST /reservations/{id}/check-in` |
 | FR-WAT-10 | Gửi đơn xuống bếp, theo dõi KDS | `POST /orders/{id}/send-to-kitchen` (khi bật `ordering.requireStaffConfirmation`), `GET /kitchen/queue` |
-| FR-WAT-11 | Đang dọn → Sẵn sàng | `PATCH /tables/{id}/status` |
+| FR-WAT-11 | Đang dọn dẹp → Trống | `PATCH /tables/{id}/status` |
 | FR-WAT-12 | Đổi / hủy món trước khi bếp làm | `PATCH /order-items/{id}`, `POST /order-items/{id}/cancel` (chỉ khi `PENDING` / `RECEIVED`) |
 | FR-WAT-13 | Hóa đơn cuối, tách bill, voucher | `POST /bills`, `POST /bills/{id}/split` (`EQUAL` / `ITEMS`) |
 | FR-WAT-14 | Xác nhận thanh toán (tiền mặt, chuyển khoản, ví, POS) | `POST /bills/{id}/payments` |
@@ -62,7 +62,7 @@ Trong code, các hàm / route liên quan đều có comment `FR-xx` để tra c�
 
 | ID | Yêu cầu | API |
 |---|---|---|
-| FR-KIT-01 | Nhận đơn real-time, sắp theo ưu tiên / thời gian | `GET /kitchen/queue` + socket `kitchen.order-received` |
+| FR-KIT-01 | Nhận đơn real-time, sắp cũ nhất trước (theo backlog US-13) | `GET /kitchen/queue` + socket `kitchen.order-received` |
 | FR-KIT-02 | Chi tiết món, ghi chú, dị ứng | `GET /kitchen/queue` (`note`, `specialRequests`, `reservationNote`, `comboItems`) |
 | FR-KIT-03 | Đã nhận → Đang làm → Hoàn thành → Đã giao | `PATCH /kitchen/items/{id}/status`, `POST /kitchen/orders/{id}/status` |
 | FR-KIT-04 | Đánh dấu tạm hết, đồng bộ menu | `PATCH /kitchen/menu-items/{id}/availability` + socket `menu.item-updated` |
@@ -126,17 +126,32 @@ Các quy tắc dưới đây đi theo Acceptance Criteria trong `Productbacklog.
 
 | Story | AC | Nơi xử lý |
 |---|---|---|
+| US-1 AC1 | QR mở thực đơn + số bàn; QR sai báo lỗi thân thiện (404) | `POST /public/tables/{qrToken}/session` |
 | US-2 | Số lượng 1-20, ghi chú ≤ 100 ký tự | `MAX_ITEM_QUANTITY`, `MAX_NOTE_LENGTH` trong `orders/dto/orders.dto.ts` |
 | US-3 AC3 | Cùng loại yêu cầu không gửi lại trong 2 phút (trả 429 kèm thông báo) | `REPEAT_COOLDOWN_MINUTES` trong `service-requests.service.ts` |
 | US-4 AC1 | Số khách 1-12 | `MAX_PARTY_SIZE` trong `reservations/dto/reservations.dto.ts` |
+| US-4 AC2 | Hết bàn → 409 kèm `alternatives.timeSlots` (khung giờ khác) | `ReservationsService.create` |
+| US-4 AC4, US-11 | Đặt bàn mới ở trạng thái Chờ xác nhận, phục vụ xác nhận / từ chối (kèm lý do) | `reservationPolicy.requireManualApproval = true`; `POST /reservations/{id}/confirm`, `/reject` |
 | US-5 | Chỉ đánh giá món sau khi hóa đơn Paid; bắt buộc chấm sao; bình luận ≤ 300 ký tự | `FeedbackService.createDishReview`, `MAX_REVIEW_COMMENT_LENGTH` |
+| US-6 AC1 | Đăng ký bắt buộc email duy nhất | `RegisterDto.email` |
 | US-6, US-18 | Mật khẩu ≥ 8 ký tự | `MIN_PASSWORD_LENGTH` trong `auth/dto/auth.dto.ts` |
 | US-7, US-18 | Nhân viên đăng nhập bằng tên đăng nhập duy nhất | Cột `User.username`, `AuthService.login`, `POST /admin/users` (`username`) |
+| US-9 AC1 | Bàn chỉ có 4 trạng thái Trống / Đang có khách / Đã đặt / Đang dọn dẹp; quét QR **không** đổi trạng thái, **đơn đầu tiên** chuyển bàn sang Đang có khách; phục vụ chuyển Đang dọn dẹp → Trống | Enum `TableStatus` (migration `remove_table_ready_status`), `TableSessionsService.markOccupied` gọi trong `OrdersService.createOrder`, `ALLOWED_TRANSITIONS` trong `tables.service.ts` |
+| US-9 AC2 | Thông báo cho phục vụ (đơn mới, yêu cầu phục vụ, món sẵn sàng) có số bàn + loại sự kiện, mới nhất trước, bộ đếm chưa đọc | `NotificationsService.notifyBranchStaff`; `GET /me/notifications`, `GET /me/notifications/unread-count`; socket `notification` |
+| US-9 AC3 | Phục vụ đánh dấu đơn Sẵn sàng → Đã phục vụ | `POST /orders/{id}/serve` (cả đơn), `POST /order-items/{id}/serve` (từng món) |
+| US-10 | Phục vụ chọn bàn để gọi hộ; đơn ghi "phục vụ tạo" + tên | `POST /orders` (`tableId`); `source = WAITER`, `createdBy` / `createdByWaiter` trên KDS |
+| US-11 AC3, AC4 | Check-in → bàn Đang có khách; mã sai / đã dùng báo lỗi | `ReservationsService.checkIn` |
+| US-13 AC1 | KDS sắp cũ nhất trước, đơn mới có `isNew` | `KitchenService.queue` |
 | US-13 AC2 | Bếp chỉ đi tiến từng bước Đã nhận → Đang làm → Sẵn sàng | `NEXT` trong `orders/kitchen.service.ts` |
+| US-13 AC3, DoD B-05 | Ghi thời gian + người đổi trạng thái | Cột `receivedAt / startedAt / readyAt / servedAt` + audit log `order.status`, `order_item.status` |
+| US-15 AC1, DoD G-02 | Chạy dự án bằng 1 lệnh | `npm run quickstart` |
 | US-16 AC1 | Giá món > 0 | `CreateMenuItemDto.price` |
 | US-17, US-18 | Quản lý cấu hình bàn / QR, thông tin nhà hàng, tài khoản nhân viên | Vai trò `MANAGER` có `table.configure`, `settings.manage`, `user.manage`; không quản lý được tài khoản có quyền cao hơn mình |
+| US-17 AC3 | Tên, địa chỉ, giờ mở cửa hiển thị trên trang thực đơn | `GET /public/menu` → `restaurant` |
 | US-17 AC4 | Bàn có đơn chưa thanh toán không xóa được (409) | `BranchesService.deleteTable` |
 | US-18 AC4 | Không tự khóa / tự đổi vai trò của chính mình | `UsersService.setLocked`, `UsersService.update` |
-| US-19 | Doanh thu và top 10 món chỉ tính hóa đơn Paid | `ReportsService.revenue*`, `ReportsService.dishes` (`topOrdered`) |
+| US-19 | Doanh thu và top 10 món chỉ tính hóa đơn Paid; kỳ không có dữ liệu → 0 + "Không có dữ liệu" | `ReportsService.revenue*`, `ReportsService.dishes` (`topOrdered`, `hasData`, `message`) |
+| DoD B-06 | Không tạo trùng khi gửi đồng thời: giỏ hàng, hóa đơn, thanh toán, đặt bàn, mã check-in | Giành giỏ hàng trong `createFromSession`; advisory lock trong `BillsService.generate` / `pay` và `ReservationsService.create`; `updateMany` có điều kiện trong `checkIn` |
+| DoD B-07 | Migration chạy được trên DB trống và DB đã có dữ liệu | Migration `remove_table_ready_status` chuyển bàn READY → AVAILABLE trước khi đổi enum |
 | US-20 | Lọc theo món / sao / ngày; điểm trung bình từng món; ≤ 2 sao gắn cờ | `GET /feedback/dish-reviews?menuItemId=&minRating=&maxRating=&from=&to=&flagged=` → `items[].isFlagged`, `dishAverages` |
 | US-15 AC3 | Dữ liệu mẫu: 1 quản lý, 2 phục vụ, 1 bếp, 10 món, 8 bàn | `prisma/seed.ts` |

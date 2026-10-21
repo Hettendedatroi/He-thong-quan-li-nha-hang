@@ -98,12 +98,48 @@ export class NotificationsService {
     return { sent: customers.length };
   }
 
+  /**
+   * US-9 AC2: thông báo cho nhân viên phục vụ của chi nhánh (đơn mới, yêu cầu phục vụ, món sẵn sàng).
+   * Lưu vào DB để màn hình phục vụ hiện danh sách mới nhất trước + bộ đếm chưa đọc, và đẩy realtime.
+   */
+  async notifyBranchStaff(
+    branchId: number,
+    code: string,
+    vars: NotifyInput['vars'],
+    data: Record<string, unknown>,
+    permission = 'service_request.handle',
+  ) {
+    try {
+      const staff = await this.prisma.user.findMany({
+        where: {
+          branchId,
+          status: 'ACTIVE',
+          role: { OR: [{ permissions: { has: permission } }, { permissions: { has: '*' } }] },
+        },
+        select: { id: true },
+      });
+      if (!staff.length) return;
+      const { title, body } = await this.render(code, 'IN_APP', 'vi', vars);
+      await this.prisma.notification.createMany({
+        data: staff.map((s) => ({ userId: s.id, type: code, title, body, data: data as Prisma.InputJsonValue })),
+      });
+      for (const s of staff) this.realtime.toUser(s.id, 'notification', { type: code, title, body, data });
+    } catch (err) {
+      this.logger.error(`Gửi thông báo nhân viên ${code} thất bại: ${(err as Error).message}`);
+    }
+  }
+
   listForUser(userId: number, unreadOnly = false, take = 50) {
     return this.prisma.notification.findMany({
       where: { userId, ...(unreadOnly ? { isRead: false } : {}) },
       orderBy: { createdAt: 'desc' },
       take,
     });
+  }
+
+  /** US-9 AC2: bộ đếm thông báo chưa đọc */
+  async unreadCount(userId: number) {
+    return { count: await this.prisma.notification.count({ where: { userId, isRead: false } }) };
   }
 
   async markRead(userId: number, id: number) {

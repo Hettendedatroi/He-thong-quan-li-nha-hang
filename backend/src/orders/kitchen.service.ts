@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { OrderItemStatus, Prisma } from '@prisma/client';
 import type { AuthUser } from '../common/types/auth-user';
 import { assertBranchAccess } from '../common/utils/branch-scope';
+import { AuditService } from '../core/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeService } from '../realtime/realtime.service';
@@ -20,6 +21,15 @@ const NEXT: Record<OrderItemStatus, OrderItemStatus[]> = {
 
 const ACTIVE: OrderItemStatus[] = ['PENDING', 'RECEIVED', 'PREPARING', 'READY'];
 
+const STATUS_LABEL: Record<OrderItemStatus, string> = {
+  PENDING: 'Đã gửi bếp',
+  RECEIVED: 'Đã nhận',
+  PREPARING: 'Đang chuẩn bị',
+  READY: 'Sẵn sàng',
+  SERVED: 'Đã phục vụ',
+  CANCELLED: 'Đã hủy',
+};
+
 /** Màn hình bếp - Kitchen Display System (FR-KIT-01..FR-KIT-03) */
 @Injectable()
 export class KitchenService {
@@ -28,15 +38,20 @@ export class KitchenService {
     private readonly orders: OrdersService,
     private readonly realtime: RealtimeService,
     private readonly notifications: NotificationsService,
+    private readonly audit: AuditService,
   ) {}
 
-  /** FR-KIT-01, FR-KIT-02: hàng đợi bếp, sắp theo ưu tiên rồi thời gian gửi; kèm ghi chú & dị ứng */
+  /**
+   * FR-KIT-01, FR-KIT-02, US-13 AC1: hàng đợi bếp sắp xếp CŨ NHẤT TRƯỚC, kèm bàn, thời gian, món, số lượng, ghi chú;
+   * `isNew` = đơn mới chưa được bếp nhận (để làm nổi bật). Đơn đã phục vụ rời danh sách (US-13 AC4).
+   */
   async queue(branchId: number) {
     const now = Date.now();
     const orders = await this.prisma.order.findMany({
       where: { branchId, status: 'SENT_TO_KITCHEN', items: { some: { status: { in: ACTIVE } } } },
-      orderBy: [{ priority: 'desc' }, { sentAt: 'asc' }],
+      orderBy: [{ sentAt: 'asc' }, { id: 'asc' }],
       include: {
+        createdBy: { select: { id: true, fullName: true } },
         table: { select: { id: true, code: true } },
         session: { select: { guestCount: true, reservation: { select: { specialRequests: true, note: true } } } },
         items: {
@@ -56,6 +71,9 @@ export class KitchenService {
       table: o.table,
       priority: o.priority,
       source: o.source,
+      // US-10 AC4: đơn do phục vụ tạo hiển thị kèm tên phục vụ
+      createdByWaiter: o.source === 'WAITER' ? (o.createdBy?.fullName ?? null) : null,
+      isNew: o.items.every((i) => i.status === 'PENDING'),
       note: o.note,
       sentAt: o.sentAt,
       waitingMinutes: o.sentAt ? Math.floor((now - o.sentAt.getTime()) / 60_000) : 0,
@@ -87,13 +105,23 @@ export class KitchenService {
     assertBranchAccess(user, item.order.branchId);
     if (item.order.status !== 'SENT_TO_KITCHEN') throw new BadRequestException('Đơn chưa được gửi xuống bếp');
     if (!NEXT[item.status].includes(status)) {
-      throw new BadRequestException(`Không thể chuyển món từ ${item.status} sang ${status}`);
+      throw new BadRequestException(
+        `Không thể chuyển món từ "${STATUS_LABEL[item.status]}" sang "${STATUS_LABEL[status]}" (không được lùi hoặc bỏ bước)`,
+      );
     }
     const updated = await this.prisma.orderItem.update({
       where: { id: itemId },
       data: this.statusData(item, status, user.id),
     });
     await refreshOrderStatus(this.prisma, item.orderId);
+    // US-13 AC3, DoD B-05: ghi lại người thực hiện & thời gian mỗi lần đổi trạng thái
+    await this.audit.log({
+      userId: user.id,
+      action: 'order_item.status',
+      entity: 'OrderItem',
+      entityId: itemId,
+      data: { orderId: item.orderId, from: item.status, to: status },
+    });
     this.orders.emitItem(item.order, updated);
     if (status === 'READY') await this.onReady(item.order, updated.name);
     return updated;
@@ -109,12 +137,23 @@ export class KitchenService {
     assertBranchAccess(user, order.branchId);
     if (order.status !== 'SENT_TO_KITCHEN') throw new BadRequestException('Đơn chưa được gửi xuống bếp');
     const eligible = order.items.filter((i) => NEXT[i.status].includes(status));
-    if (!eligible.length) throw new BadRequestException('Không có món nào chuyển được sang trạng thái này');
+    if (!eligible.length) {
+      throw new BadRequestException(
+        `Không có món nào chuyển được sang "${STATUS_LABEL[status]}" (không được lùi hoặc bỏ bước)`,
+      );
+    }
     for (const i of eligible) {
       const updated = await this.prisma.orderItem.update({ where: { id: i.id }, data: this.statusData(i, status, user.id) });
       this.orders.emitItem(order, updated);
     }
     await refreshOrderStatus(this.prisma, orderId);
+    await this.audit.log({
+      userId: user.id,
+      action: 'order.status',
+      entity: 'Order',
+      entityId: orderId,
+      data: { to: status, items: eligible.map((i) => ({ id: i.id, from: i.status })) },
+    });
     if (status === 'READY') await this.onReady(order, eligible.map((i) => i.name).join(', '));
     return { updated: eligible.length };
   }
@@ -149,6 +188,13 @@ export class KitchenService {
       tableCode: order.table.code,
       items: itemNames,
     });
+    // US-9 AC2: thông báo lưu lại cho phục vụ
+    await this.notifications.notifyBranchStaff(
+      order.branchId,
+      'STAFF_ORDER_READY',
+      { table: order.table.code, items: itemNames },
+      { orderId: order.id, event: 'ORDER_READY' },
+    );
     if (order.customerId) {
       await this.notifications.notify({
         code: 'ORDER_ITEM_READY',

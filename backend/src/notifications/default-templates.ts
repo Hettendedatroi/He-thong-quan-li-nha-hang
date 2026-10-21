@@ -39,6 +39,19 @@ export const DEFAULT_TEMPLATES: Record<string, { title: string; body: string }> 
     title: 'Món {{item}} đã sẵn sàng',
     body: 'Món {{item}} của bàn {{table}} đã xong và đang được mang ra.',
   },
+  // US-9 AC2: thông báo cho phục vụ (kèm số bàn và loại sự kiện)
+  STAFF_NEW_ORDER: {
+    title: 'Bàn {{table}}: đơn mới {{code}}',
+    body: '{{count}} món - {{source}}',
+  },
+  STAFF_SERVICE_REQUEST: {
+    title: 'Bàn {{table}}: {{type}}',
+    body: '{{message}}',
+  },
+  STAFF_ORDER_READY: {
+    title: 'Bàn {{table}}: món đã sẵn sàng',
+    body: '{{items}} - mời mang ra cho khách',
+  },
   FEEDBACK_RESPONSE: {
     title: 'Nhà hàng đã phản hồi đánh giá của bạn',
     body: '{{message}}',

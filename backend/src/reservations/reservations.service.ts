@@ -147,17 +147,23 @@ export class ReservationsService {
     const needsDeposit = !byStaff && policy.depositRequired && dto.partySize >= policy.depositPartySize;
     const needsApproval = !byStaff && this.needsApproval(policy, dto.partySize);
 
+    const phone = normalizePhone(dto.customerPhone)!;
+    let noTableMessage: string | null = null;
     const reservation = await this.prisma.$transaction(async (tx) => {
-      // Khóa theo chi nhánh để tránh 2 khách đặt trùng một bàn cùng lúc
+      // Khóa theo chi nhánh để tránh 2 khách đặt trùng một bàn cùng lúc (DoD B-06)
       await tx.$queryRaw`SELECT pg_advisory_xact_lock(${1_000_000 + branch.id}::bigint)::text`;
+      // DoD B-06: cùng SĐT gửi 2 lần (bấm đúp) không tạo 2 lượt đặt trùng giờ
+      const duplicate = await tx.reservation.findFirst({
+        where: { branchId: branch.id, customerPhone: phone, status: { in: HOLDING }, startAt: { lt: end }, endAt: { gt: start } },
+      });
+      if (duplicate) throw new ConflictException(`Số điện thoại này đã có đặt bàn ${duplicate.code} vào khung giờ này`);
       const tables = await this.findAvailableTables(tx, { ...dto, start, end });
       const table = dto.tableId ? tables.find((t) => t.id === dto.tableId) : tables[0];
       if (!table) {
-        throw new ConflictException(
-          dto.tableId
-            ? 'Bàn đã chọn không còn trống vào giờ này'
-            : 'Đã hết bàn phù hợp vào giờ này, vui lòng xem gợi ý khung giờ / khu vực khác',
-        );
+        noTableMessage = dto.tableId
+          ? 'Bàn đã chọn không còn trống vào giờ này'
+          : 'Đã hết bàn đủ chỗ vào giờ này, vui lòng chọn một trong các khung giờ gợi ý';
+        return null;
       }
       return tx.reservation.create({
         data: {
@@ -170,7 +176,7 @@ export class ReservationsService {
           startAt: start,
           endAt: end,
           customerName: dto.customerName.trim(),
-          customerPhone: normalizePhone(dto.customerPhone)!,
+          customerPhone: phone,
           customerEmail: dto.customerEmail?.toLowerCase(),
           specialRequests: dto.specialRequests ?? [],
           note: dto.note,
@@ -182,6 +188,16 @@ export class ReservationsService {
         include: INCLUDE_FULL,
       });
     });
+
+    // US-4 AC2: hết bàn -> báo lỗi kèm gợi ý khung giờ / khu vực khác ngay trong response 409
+    if (!reservation) {
+      const suggest = await this.checkAvailability(dto);
+      throw new ConflictException({
+        message: noTableMessage,
+        availableTables: suggest.tables,
+        alternatives: suggest.alternatives ?? { otherZones: [], timeSlots: [] },
+      });
+    }
 
     await this.notifyCustomer(reservation, reservation.status === 'CONFIRMED' ? 'RESERVATION_CONFIRMED' : 'RESERVATION_CREATED');
     // FR-WAT-01: báo phục vụ ngay khi có đặt bàn mới
@@ -393,13 +409,21 @@ export class ReservationsService {
   async checkIn(user: AuthUser, where: { id?: number; code?: string }) {
     const r = where.id ? await this.findById(where.id) : await this.findByCode(where.code!.trim().toUpperCase());
     assertBranchAccess(user, r.branchId);
-    if (r.status === 'CHECKED_IN') throw new BadRequestException('Đặt bàn đã check-in rồi');
-    if (r.status !== 'CONFIRMED') throw new BadRequestException(`Không thể check-in đặt bàn ở trạng thái ${r.status}`);
+    // US-11 AC4: mã đã dùng / không hợp lệ phải báo lỗi rõ ràng
+    if (r.status === 'CHECKED_IN' || r.status === 'COMPLETED') throw new BadRequestException('Mã đặt chỗ đã được sử dụng');
+    if (r.status !== 'CONFIRMED') {
+      throw new BadRequestException(
+        r.status === 'PENDING'
+          ? 'Đặt bàn chưa được xác nhận, hãy xác nhận trước khi check-in'
+          : 'Đặt bàn đã bị hủy / từ chối, không thể check-in',
+      );
+    }
     const now = new Date();
     if (now < addMinutes(r.startAt, -120)) throw new BadRequestException('Chưa tới giờ check-in (sớm hơn 2 tiếng)');
 
-    // Nếu bàn đã gán đang có khách khác -> tìm bàn trống khác
+    // Nếu bàn đã gán đang có khách khác -> tìm bàn trống khác (phiên rỗng do quét QR thì bỏ qua)
     let tableId = r.tableId;
+    if (tableId) await this.sessions.closeEmptySessions(tableId);
     const occupied = tableId ? await this.sessions.findOpenSession(tableId) : null;
     if (!tableId || occupied) {
       const policy = await this.settings.get('reservationPolicy');
@@ -414,17 +438,27 @@ export class ReservationsService {
       if (!candidate) throw new ConflictException('Hiện không còn bàn trống phù hợp, vui lòng xếp bàn thủ công');
       tableId = candidate.id;
     }
-    const { session } = await this.sessions.openForTable(tableId, {
-      guestCount: r.partySize,
-      customerId: r.customerId,
-      reservationId: r.id,
-      openedById: user.id,
-    });
-    const updated = await this.prisma.reservation.update({
-      where: { id: r.id },
+    // DoD B-06: mã đặt chỗ chỉ dùng 1 lần - "giành" trạng thái trước để 2 lần quét đồng thời không cùng check-in
+    const claimed = await this.prisma.reservation.updateMany({
+      where: { id: r.id, status: 'CONFIRMED' },
       data: { status: 'CHECKED_IN', checkedInAt: now, tableId },
-      include: INCLUDE_FULL,
     });
+    if (!claimed.count) throw new BadRequestException('Mã đặt chỗ đã được sử dụng');
+    let session: Awaited<ReturnType<TableSessionsService['openForTable']>>['session'];
+    try {
+      // US-11 AC3: check-in thành công -> bàn chuyển Đang có khách
+      ({ session } = await this.sessions.openForTable(tableId, {
+        guestCount: r.partySize,
+        customerId: r.customerId,
+        reservationId: r.id,
+        openedById: user.id,
+        occupy: true,
+      }));
+    } catch (err) {
+      await this.prisma.reservation.update({ where: { id: r.id }, data: { status: 'CONFIRMED', checkedInAt: null } });
+      throw err;
+    }
+    const updated = await this.prisma.reservation.findUniqueOrThrow({ where: { id: r.id }, include: INCLUDE_FULL });
     await this.audit.log({ userId: user.id, action: 'reservation.check_in', entity: 'Reservation', entityId: r.id });
     this.emitUpdated(updated);
     return { reservation: this.present(updated), session: { id: session.id, token: session.token } };
