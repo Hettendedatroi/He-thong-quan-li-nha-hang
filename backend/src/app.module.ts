@@ -19,8 +19,11 @@ import { OrdersModule } from './orders/orders.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { PromotionsModule } from './promotions/promotions.module';
 import { RealtimeModule } from './realtime/realtime.module';
+import { ReportsModule } from './reports/reports.module';
 import { ReservationsModule } from './reservations/reservations.module';
 import { ServiceRequestsModule } from './service-requests/service-requests.module';
+import { StaffModule } from './staff/staff.module';
+import { SystemModule } from './system/system.module';
 import { TablesModule } from './tables/tables.module';
 import { UploadsModule } from './uploads/uploads.module';
 import { UsersModule } from './users/users.module';
@@ -58,6 +61,9 @@ import { UsersModule } from './users/users.module';
     BillingModule,
     FeedbackModule,
     CustomersModule,
+    ReportsModule,
+    StaffModule,
+    SystemModule,
     UploadsModule,
   ],
   providers: [
