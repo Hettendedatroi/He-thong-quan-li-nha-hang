@@ -15,6 +15,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { PromotionsModule } from './promotions/promotions.module';
 import { RealtimeModule } from './realtime/realtime.module';
+import { ReservationsModule } from './reservations/reservations.module';
 import { TablesModule } from './tables/tables.module';
 import { UploadsModule } from './uploads/uploads.module';
 import { UsersModule } from './users/users.module';
@@ -46,6 +47,7 @@ import { UsersModule } from './users/users.module';
     TablesModule,
     MenuModule,
     PromotionsModule,
+    ReservationsModule,
     UploadsModule,
   ],
   providers: [
