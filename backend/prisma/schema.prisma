@@ -210,6 +210,8 @@ model Role {
 
 model User {
   id            Int          @id @default(autoincrement())
+  /// US-7, US-18: tên đăng nhập của nhân viên (khách hàng dùng email / SĐT)
+  username      String?      @unique
   email         String?      @unique
   phone         String?      @unique
   passwordHash  String?

@@ -76,7 +76,13 @@ export class AuthService {
   async login(dto: LoginDto, meta: RequestMeta) {
     const identifier = dto.identifier.trim();
     const user = await this.prisma.user.findFirst({
-      where: { OR: [{ email: identifier.toLowerCase() }, { phone: normalizePhone(identifier) ?? identifier }] },
+      where: {
+        OR: [
+          { username: identifier.toLowerCase() },
+          { email: identifier.toLowerCase() },
+          { phone: normalizePhone(identifier) ?? identifier },
+        ],
+      },
       include: { role: true },
     });
     if (!user?.passwordHash || !(await bcrypt.compare(dto.password, user.passwordHash))) {

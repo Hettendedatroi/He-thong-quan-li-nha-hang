@@ -21,32 +21,28 @@ async function main() {
   }
   const roles = Object.fromEntries((await prisma.role.findMany()).map((r) => [r.code, r.id]));
 
-  // ---------------------------------------------------------------- Chi nhánh
+  // ---------------------------------------------------------------- Nhà hàng
   const branch1 = await prisma.branch.upsert({
     where: { id: 1 },
-    create: { name: 'Chi nhánh Quận 1', address: '12 Nguyễn Huệ, Quận 1, TP.HCM', phone: '028 3822 0001', openTime: '09:00', closeTime: '22:30' },
-    update: {},
-  });
-  const branch2 = await prisma.branch.upsert({
-    where: { id: 2 },
-    create: { name: 'Chi nhánh Cầu Giấy', address: '88 Trần Thái Tông, Cầu Giấy, Hà Nội', phone: '024 3795 0002', openTime: '10:00', closeTime: '22:00' },
+    create: { name: 'Nhà hàng Group 4', address: '12 Nguyễn Huệ, Quận 1, TP.HCM', phone: '028 3822 0001', openTime: '09:00', closeTime: '22:30' },
     update: {},
   });
 
-  // ---------------------------------------------------------------- Tài khoản mẫu
+  // ---------------------------------------------------------------- Tài khoản mẫu (US-15 AC3: 1 quản lý, 2 phục vụ, 1 bếp)
   const password = await bcrypt.hash('Password@123', 10);
   const users = [
-    { email: 'admin@restaurant.local', phone: '0900000001', fullName: 'Quản trị viên', role: 'ADMIN', branchId: null },
-    { email: 'manager@restaurant.local', phone: '0900000002', fullName: 'Nguyễn Quản Lý', role: 'MANAGER', branchId: branch1.id },
-    { email: 'leader@restaurant.local', phone: '0900000003', fullName: 'Trần Trưởng Ca', role: 'SENIOR_WAITER', branchId: branch1.id },
-    { email: 'waiter@restaurant.local', phone: '0900000004', fullName: 'Lê Phục Vụ', role: 'WAITER', branchId: branch1.id },
-    { email: 'kitchen@restaurant.local', phone: '0900000005', fullName: 'Phạm Đầu Bếp', role: 'KITCHEN', branchId: branch1.id },
-    { email: 'customer@example.com', phone: '0911111111', fullName: 'Khách Hàng Mẫu', role: 'CUSTOMER', branchId: null },
+    { username: 'manager', email: 'manager@restaurant.local', phone: '0900000002', fullName: 'Nguyễn Quản Lý', role: 'MANAGER', branchId: branch1.id },
+    { username: 'waiter1', email: 'waiter@restaurant.local', phone: '0900000004', fullName: 'Lê Phục Vụ', role: 'WAITER', branchId: branch1.id },
+    { username: 'waiter2', email: 'waiter2@restaurant.local', phone: '0900000006', fullName: 'Võ Phục Vụ', role: 'WAITER', branchId: branch1.id },
+    { username: 'kitchen', email: 'kitchen@restaurant.local', phone: '0900000005', fullName: 'Phạm Đầu Bếp', role: 'KITCHEN', branchId: branch1.id },
+    // Khách hàng mẫu để thử US-6 (đăng nhập bằng email, không có username)
+    { username: null, email: 'customer@example.com', phone: '0911111111', fullName: 'Khách Hàng Mẫu', role: 'CUSTOMER', branchId: null },
   ];
   for (const u of users) {
     await prisma.user.upsert({
       where: { email: u.email },
       create: {
+        username: u.username,
         email: u.email,
         phone: u.phone,
         fullName: u.fullName,
@@ -55,17 +51,17 @@ async function main() {
         branchId: u.branchId,
         loyaltyPoints: u.role === 'CUSTOMER' ? 50 : 0,
       },
-      update: { roleId: roles[u.role], branchId: u.branchId },
+      update: { username: u.username, roleId: roles[u.role], branchId: u.branchId },
     });
   }
 
-  // ---------------------------------------------------------------- Khu vực & bàn
+  // ---------------------------------------------------------------- Khu vực & bàn (US-15 AC3: 8 bàn)
   const zoneDefs = [
-    { name: 'Trong nhà', locationType: 'INDOOR', prefix: 'A', tables: [2, 2, 4, 4, 4, 6] },
-    { name: 'Ngoài trời', locationType: 'OUTDOOR', prefix: 'B', tables: [2, 4, 4, 6] },
-    { name: 'Phòng VIP', locationType: 'VIP', prefix: 'V', tables: [8, 12] },
+    { name: 'Trong nhà', locationType: 'INDOOR', prefix: 'A', tables: [2, 2, 4, 4, 6] },
+    { name: 'Ngoài trời', locationType: 'OUTDOOR', prefix: 'B', tables: [4, 6] },
+    { name: 'Phòng VIP', locationType: 'VIP', prefix: 'V', tables: [12] },
   ];
-  for (const branch of [branch1, branch2]) {
+  for (const branch of [branch1]) {
     for (const [zi, z] of zoneDefs.entries()) {
       const zone = await prisma.zone.upsert({
         where: { branchId_name: { branchId: branch.id, name: z.name } },
@@ -83,29 +79,25 @@ async function main() {
     }
   }
 
-  // ---------------------------------------------------------------- Thực đơn
+  // ---------------------------------------------------------------- Thực đơn (US-15 AC3: 10 món)
   const categories = [
     { name: 'Khai vị', en: 'Appetizers', items: [
       { name: 'Gỏi cuốn tôm thịt', en: 'Fresh spring rolls', price: 65000, prep: 8, tags: ['healthy'] },
       { name: 'Chả giò rế', en: 'Crispy fried rolls', price: 75000, prep: 12, tags: [] },
-      { name: 'Súp cua', en: 'Crab soup', price: 55000, prep: 10, tags: [] },
     ] },
     { name: 'Món chính', en: 'Main courses', items: [
       { name: 'Bò lúc lắc', en: 'Shaking beef', price: 185000, prep: 15, tags: ['best-seller'] },
       { name: 'Cá kho tộ', en: 'Caramelized fish in clay pot', price: 145000, prep: 20, tags: [] },
       { name: 'Cơm chiên hải sản', en: 'Seafood fried rice', price: 120000, prep: 12, tags: [] },
       { name: 'Lẩu thái hải sản', en: 'Thai seafood hotpot', price: 390000, prep: 20, tags: ['spicy', 'sharing'] },
-      { name: 'Đậu hũ sốt nấm', en: 'Tofu with mushroom sauce', price: 85000, prep: 10, tags: ['vegetarian'] },
     ] },
     { name: 'Tráng miệng', en: 'Desserts', items: [
-      { name: 'Chè khúc bạch', en: 'Khuc bach sweet soup', price: 45000, prep: 5, tags: [] },
       { name: 'Bánh flan', en: 'Caramel flan', price: 35000, prep: 3, tags: [] },
     ] },
     { name: 'Đồ uống', en: 'Beverages', items: [
       { name: 'Trà đào cam sả', en: 'Peach lemongrass tea', price: 49000, prep: 4, tags: [] },
       { name: 'Cà phê sữa đá', en: 'Iced milk coffee', price: 39000, prep: 3, tags: [] },
       { name: 'Nước ép cam', en: 'Orange juice', price: 45000, prep: 4, tags: ['healthy'] },
-      { name: 'Bia Sài Gòn', en: 'Saigon beer', price: 30000, prep: 1, tags: [] },
     ] },
   ];
   const itemIds: Record<string, number> = {};
@@ -239,7 +231,7 @@ async function main() {
   }
 
   console.log('Seed xong. Tài khoản mẫu (mật khẩu: Password@123):');
-  for (const u of users) console.log(`  - ${u.role.padEnd(14)} ${u.email}`);
+  for (const u of users) console.log(`  - ${u.role.padEnd(10)} ${u.username ?? u.email}`);
 }
 
 main()

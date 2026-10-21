@@ -119,3 +119,24 @@ Trong code, các hàm / route liên quan đều có comment `FR-xx` để tra c�
 | NFR-04 Sẵn sàng | `GET /api/health`, khóa advisory chống đặt trùng bàn, transaction cho thao tác nhiều bước |
 | NFR-05 Tương thích | Khách dùng web qua QR, không cần cài app; toàn bộ API REST + Socket.IO |
 | NFR-06 Truy vết | `AuditService` ghi: đổi / hủy món, đổi giá, đổi quyền, hoàn tiền, hủy bill, giảm giá đặc biệt, cấu hình |
+
+## 8. Đối chiếu Product Backlog (SRS rút gọn)
+
+Các quy tắc dưới đây đi theo Acceptance Criteria trong `Productbacklog.xlsx` (ưu tiên hơn SRS đầy đủ khi khác nhau).
+
+| Story | AC | Nơi xử lý |
+|---|---|---|
+| US-2 | Số lượng 1-20, ghi chú ≤ 100 ký tự | `MAX_ITEM_QUANTITY`, `MAX_NOTE_LENGTH` trong `orders/dto/orders.dto.ts` |
+| US-3 AC3 | Cùng loại yêu cầu không gửi lại trong 2 phút (trả 429 kèm thông báo) | `REPEAT_COOLDOWN_MINUTES` trong `service-requests.service.ts` |
+| US-4 AC1 | Số khách 1-12 | `MAX_PARTY_SIZE` trong `reservations/dto/reservations.dto.ts` |
+| US-5 | Chỉ đánh giá món sau khi hóa đơn Paid; bắt buộc chấm sao; bình luận ≤ 300 ký tự | `FeedbackService.createDishReview`, `MAX_REVIEW_COMMENT_LENGTH` |
+| US-6, US-18 | Mật khẩu ≥ 8 ký tự | `MIN_PASSWORD_LENGTH` trong `auth/dto/auth.dto.ts` |
+| US-7, US-18 | Nhân viên đăng nhập bằng tên đăng nhập duy nhất | Cột `User.username`, `AuthService.login`, `POST /admin/users` (`username`) |
+| US-13 AC2 | Bếp chỉ đi tiến từng bước Đã nhận → Đang làm → Sẵn sàng | `NEXT` trong `orders/kitchen.service.ts` |
+| US-16 AC1 | Giá món > 0 | `CreateMenuItemDto.price` |
+| US-17, US-18 | Quản lý cấu hình bàn / QR, thông tin nhà hàng, tài khoản nhân viên | Vai trò `MANAGER` có `table.configure`, `settings.manage`, `user.manage`; không quản lý được tài khoản có quyền cao hơn mình |
+| US-17 AC4 | Bàn có đơn chưa thanh toán không xóa được (409) | `BranchesService.deleteTable` |
+| US-18 AC4 | Không tự khóa / tự đổi vai trò của chính mình | `UsersService.setLocked`, `UsersService.update` |
+| US-19 | Doanh thu và top 10 món chỉ tính hóa đơn Paid | `ReportsService.revenue*`, `ReportsService.dishes` (`topOrdered`) |
+| US-20 | Lọc theo món / sao / ngày; điểm trung bình từng món; ≤ 2 sao gắn cờ | `GET /feedback/dish-reviews?menuItemId=&minRating=&maxRating=&from=&to=&flagged=` → `items[].isFlagged`, `dishAverages` |
+| US-15 AC3 | Dữ liệu mẫu: 1 quản lý, 2 phục vụ, 1 bếp, 10 món, 8 bàn | `prisma/seed.ts` |

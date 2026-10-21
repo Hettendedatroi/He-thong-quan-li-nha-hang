@@ -81,8 +81,9 @@ export class CreateMenuItemDto {
   @IsString()
   description?: string;
 
+  /** US-16 AC1: giá phải > 0 */
   @IsInt()
-  @Min(0)
+  @Min(1, { message: 'Giá món phải lớn hơn 0' })
   price: number;
 
   @IsOptional()
@@ -165,7 +166,7 @@ export class CreateComboDto {
   description?: string;
 
   @IsInt()
-  @Min(0)
+  @Min(1, { message: 'Giá combo phải lớn hơn 0' })
   price: number;
 
   @IsOptional()

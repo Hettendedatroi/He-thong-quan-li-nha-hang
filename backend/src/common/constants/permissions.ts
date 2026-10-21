@@ -47,7 +47,7 @@ export const PERMISSION_DESCRIPTIONS: Record<PermissionCode, string> = {
   'reservation.manage': 'Xác nhận / từ chối / check-in đặt bàn',
   'table.view': 'Xem sơ đồ bàn',
   'table.operate': 'Đổi trạng thái bàn, mở bàn, gộp / tách / chuyển bàn',
-  'table.configure': 'Cấu hình sơ đồ bàn, khu vực (admin)',
+  'table.configure': 'Cấu hình sơ đồ bàn, khu vực, mã QR',
   'order.view': 'Xem đơn gọi món',
   'order.create': 'Gọi món hộ khách',
   'order.manage': 'Gửi bếp, đổi / hủy món, đánh dấu đã phục vụ',
@@ -71,7 +71,7 @@ export const PERMISSION_DESCRIPTIONS: Record<PermissionCode, string> = {
   'report.export': 'Xuất báo cáo Excel / PDF, lập lịch gửi báo cáo',
   'staff.manage': 'Quản lý nhân viên, phân ca, chấm công',
   'notification.send': 'Gửi thông báo khuyến mãi',
-  'user.manage': 'Quản lý tài khoản (admin)',
+  'user.manage': 'Quản lý tài khoản nhân viên',
   'role.manage': 'Cấu hình phân quyền (admin)',
   'audit.view': 'Xem nhật ký hoạt động',
   'settings.manage': 'Cấu hình hệ thống, chi nhánh, chính sách',
@@ -121,9 +121,13 @@ export const DEFAULT_ROLES: { code: string; name: string; description: string; p
   {
     code: ROLE_CODES.MANAGER,
     name: 'Quản lý nhà hàng',
-    description: 'Báo cáo, thực đơn, vận hành',
+    description: 'Báo cáo, thực đơn, bàn & QR, tài khoản nhân viên, thông tin nhà hàng',
     permissions: [
       ...WAITER_PERMISSIONS,
+      // US-17, US-18: Quản lý cấu hình bàn / thông tin nhà hàng và tài khoản nhân viên
+      P.TABLE_CONFIGURE,
+      P.SETTINGS_MANAGE,
+      P.USER_MANAGE,
       P.BILL_VOID,
       P.BILL_REFUND,
       P.BILL_DISCOUNT_OVERRIDE,

@@ -8,9 +8,9 @@ import { RealtimeService } from '../realtime/realtime.service';
 import { refreshOrderStatus } from './order-status.util';
 import { OrdersService } from './orders.service';
 
-/** FR-KIT-03: luồng trạng thái hợp lệ trên KDS */
+/** FR-KIT-03, US-13 AC2: chỉ đi tiến từng bước, không lùi / không bỏ bước */
 const NEXT: Record<OrderItemStatus, OrderItemStatus[]> = {
-  PENDING: ['RECEIVED', 'PREPARING'],
+  PENDING: ['RECEIVED'],
   RECEIVED: ['PREPARING'],
   PREPARING: ['READY'],
   READY: ['SERVED'],

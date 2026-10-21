@@ -3,7 +3,7 @@ import { PricingService } from '../menu/pricing.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { TableSessionsService } from '../tables/table-sessions.service';
-import { CartItemDto, UpdateCartItemDto } from './dto/orders.dto';
+import { CartItemDto, MAX_ITEM_QUANTITY, UpdateCartItemDto } from './dto/orders.dto';
 
 /** FR-10: giỏ hàng dùng chung cho cả bàn - nhiều điện thoại cùng bàn thấy cùng một giỏ */
 @Injectable()
@@ -38,7 +38,7 @@ export class CartService {
     if (same) {
       await this.prisma.cartItem.update({
         where: { id: same.id },
-        data: { quantity: Math.min(50, same.quantity + dto.quantity) },
+        data: { quantity: Math.min(MAX_ITEM_QUANTITY, same.quantity + dto.quantity) },
       });
     } else {
       await this.prisma.cartItem.create({

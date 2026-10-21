@@ -16,6 +16,10 @@ import {
 } from 'class-validator';
 import { PaginationQueryDto } from '../../common/utils/pagination';
 
+/** US-2: số lượng mỗi món 1-20, ghi chú tối đa 100 ký tự */
+export const MAX_ITEM_QUANTITY = 20;
+export const MAX_NOTE_LENGTH = 100;
+
 export class OrderItemInputDto {
   /** Truyền menuItemId HOẶC comboId */
   @IsOptional()
@@ -28,13 +32,13 @@ export class OrderItemInputDto {
 
   @IsInt()
   @Min(1)
-  @Max(50)
+  @Max(MAX_ITEM_QUANTITY)
   quantity: number;
 
   /** FR-10: ghi chú món (ít cay, không hành...) */
   @IsOptional()
   @IsString()
-  @MaxLength(200)
+  @MaxLength(MAX_NOTE_LENGTH)
   note?: string;
 }
 
@@ -50,7 +54,7 @@ export class CreateCustomerOrderDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(300)
+  @MaxLength(MAX_NOTE_LENGTH)
   note?: string;
 }
 
@@ -68,7 +72,7 @@ export class CreateStaffOrderDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(300)
+  @MaxLength(MAX_NOTE_LENGTH)
   note?: string;
 
   /** 0 = thường, 1 = ưu tiên, 2 = gấp */
@@ -85,12 +89,12 @@ export class UpdateCartItemDto {
   @IsOptional()
   @IsInt()
   @Min(1)
-  @Max(50)
+  @Max(MAX_ITEM_QUANTITY)
   quantity?: number;
 
   @IsOptional()
   @IsString()
-  @MaxLength(200)
+  @MaxLength(MAX_NOTE_LENGTH)
   note?: string;
 }
 

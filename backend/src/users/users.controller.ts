@@ -31,7 +31,7 @@ export class AdminUsersController {
   /** FR-ADM-01: tạo tài khoản Quản lý / Bếp / Phục vụ */
   @Post()
   create(@CurrentUser() user: AuthUser, @Body() dto: CreateUserDto) {
-    return this.users.create(user.id, dto);
+    return this.users.create(user, dto);
   }
 
   @Get(':id')
@@ -41,23 +41,23 @@ export class AdminUsersController {
 
   @Patch(':id')
   update(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdateUserDto) {
-    return this.users.update(user.id, id, dto);
+    return this.users.update(user, id, dto);
   }
 
   @Post(':id/lock')
   lock(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number, @Body() dto: LockUserDto) {
-    return this.users.setLocked(user.id, id, true, dto.reason);
+    return this.users.setLocked(user, id, true, dto.reason);
   }
 
   @Post(':id/unlock')
   unlock(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number) {
-    return this.users.setLocked(user.id, id, false);
+    return this.users.setLocked(user, id, false);
   }
 
   /** FR-ADM-03 */
   @Post(':id/reset-password')
   resetPassword(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number, @Body() dto: ResetPasswordDto) {
-    return this.users.resetPassword(user.id, id, dto.newPassword);
+    return this.users.resetPassword(user, id, dto.newPassword);
   }
 
   @Get(':id/sessions')

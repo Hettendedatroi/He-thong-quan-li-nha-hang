@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as QRCode from 'qrcode';
 import { randomToken } from '../common/utils/codes';
@@ -114,6 +114,9 @@ export class BranchesService {
 
   /** Xóa mềm nếu bàn đã có lịch sử (để giữ dữ liệu báo cáo) */
   async deleteTable(actorId: number, id: number) {
+    // US-17 AC4: bàn đang có khách / hóa đơn chưa thanh toán thì không được xóa
+    const open = await this.prisma.tableSession.count({ where: { tableId: id, status: 'OPEN' } });
+    if (open) throw new ConflictException('Bàn đang có đơn chưa thanh toán, không thể xóa');
     const used = await this.prisma.tableSession.count({ where: { tableId: id } });
     if (used) {
       await this.prisma.diningTable.update({ where: { id }, data: { isActive: false } });
