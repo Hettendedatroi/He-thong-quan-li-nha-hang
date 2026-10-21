@@ -12,10 +12,12 @@ import { PermissionsGuard } from './common/guards/permissions.guard';
 import { CoreModule } from './core/core.module';
 import { MenuModule } from './menu/menu.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { OrdersModule } from './orders/orders.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { PromotionsModule } from './promotions/promotions.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { ReservationsModule } from './reservations/reservations.module';
+import { ServiceRequestsModule } from './service-requests/service-requests.module';
 import { TablesModule } from './tables/tables.module';
 import { UploadsModule } from './uploads/uploads.module';
 import { UsersModule } from './users/users.module';
@@ -48,6 +50,8 @@ import { UsersModule } from './users/users.module';
     MenuModule,
     PromotionsModule,
     ReservationsModule,
+    OrdersModule,
+    ServiceRequestsModule,
     UploadsModule,
   ],
   providers: [
