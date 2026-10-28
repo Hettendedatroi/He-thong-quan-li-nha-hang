@@ -3,6 +3,9 @@
   const $$ = (selector, root = document) => [
     ...root.querySelectorAll(selector),
   ];
+  const api = ["localhost:5173", "127.0.0.1:5173"].includes(location.host)
+    ? "http://127.0.0.1:3000/api"
+    : "/api";
   const toast = (message) => {
     const node = $("#toast");
     if (!node) return;
@@ -12,13 +15,17 @@
   };
   const today = new Date();
   const dateField = $('input[type="date"]');
-  if (dateField) dateField.value = today.toISOString().slice(0, 10);
+  const localDate = (date) => {
+    const offset = date.getTimezoneOffset() * 60000;
+    return new Date(date.getTime() - offset).toISOString().slice(0, 10);
+  };
+  if (dateField) dateField.value = localDate(today);
   let guests = 2;
   $$("[data-step]").forEach((button) =>
     button.addEventListener("click", () => {
-      guests = Math.max(1, Math.min(20, guests + Number(button.dataset.step)));
+      guests = Math.max(1, Math.min(12, guests + Number(button.dataset.step)));
       const count = $("#guest-count");
-      if (count) count.textContent = `${guests} nguoi`;
+      if (count) count.textContent = `${guests} người`;
     }),
   );
   $$(".table-option").forEach((option) =>
@@ -30,22 +37,55 @@
   );
   const bookingForm = $("#booking-form");
   if (bookingForm)
-    bookingForm.addEventListener("submit", (event) => {
+    bookingForm.addEventListener("submit", async (event) => {
       event.preventDefault();
       const data = new FormData(bookingForm);
-      localStorage.setItem(
-        "restaurantBooking",
-        JSON.stringify({
-          name: data.get("name"),
-          date: data.get("date"),
-          time: data.get("time"),
-          guests,
-          area: data.get("area"),
-        }),
+      const locationType = {
+        "Trong nhà": "INDOOR",
+        "Sân vườn": "OUTDOOR",
+        "Phòng riêng": "VIP",
+      }[data.get("area")];
+      let response;
+      try {
+        response = await fetch(`${api}/public/reservations`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            branchId: 1,
+            startAt: new Date(
+              `${data.get("date")}T${data.get("time")}:00+07:00`,
+            ).toISOString(),
+            partySize: guests,
+            locationType,
+            customerName: String(data.get("name") || "").trim(),
+            customerPhone: String(data.get("phone") || "").trim(),
+            note: String(data.get("note") || "").trim() || undefined,
+          }),
+        });
+      } catch {
+        toast("Không kết nối được máy chủ. Vui lòng thử lại.");
+        return;
+      }
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const message = Array.isArray(result.message)
+          ? result.message.join("; ")
+          : typeof result.message === "string"
+            ? result.message
+            : response.status >= 502
+              ? "Máy chủ đang khởi động hoặc tạm thời quá tải. Vui lòng thử lại sau ít giây."
+              : `Không thể đặt bàn (mã lỗi ${response.status})`;
+        toast(message);
+        return;
+      }
+      toast(
+        `Đặt bàn thành công · Mã ${result.code} · ${result.status === "PENDING" ? "Chờ xác nhận" : "Đã xác nhận"}`,
       );
-      toast("Da nhan yeu cau dat ban. Hen gap ban tai Bep Nha!");
       bookingForm.reset();
-      if (dateField) dateField.value = today.toISOString().slice(0, 10);
+      if (dateField) dateField.value = localDate(new Date());
+      guests = 2;
+      const count = $("#guest-count");
+      if (count) count.textContent = "2 người";
     });
   const modal = $("#booking-modal");
   $$("[data-open-modal]").forEach((button) =>
@@ -59,19 +99,19 @@
     quickBooking.addEventListener("submit", (event) => {
       event.preventDefault();
       modal.classList.remove("open");
-      toast("Dat ban moi da duoc them vao lich hom nay.");
+      toast("Đặt bàn mới đã được thêm vào lịch hôm nay.");
     });
   $$(".table").forEach((table) =>
     table.addEventListener("click", () => {
       const labels = {
-        available: "dang trong",
-        occupied: "dang co khach",
-        reserved: "da duoc dat",
+        available: "đang trống",
+        occupied: "đang có khách",
+        reserved: "đã được đặt",
       };
       const state = [...table.classList].find((item) => labels[item]);
       const help = $("#table-help");
       if (help)
-        help.textContent = `Ban ${table.dataset.table} ${labels[state]}. Bam lai de cap nhat`;
+        help.textContent = `Bàn ${table.dataset.table} ${labels[state]}. Bấm lại để cập nhật`;
     }),
   );
   $("[data-theme-toggle]")?.addEventListener("click", () =>

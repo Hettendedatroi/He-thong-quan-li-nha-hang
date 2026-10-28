@@ -1,0 +1,11 @@
+{
+  "name": "bep-nha-restaurant-web",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Giao diện demo và backend quản lý nhà hàng Bếp Nhà",
+  "scripts": {
+    "dev": "python -m http.server 5173 --bind 127.0.0.1",
+    "backend:dev": "npm --prefix backend run start:dev",
+    "backend:build": "npm --prefix backend run build"
+  }
+}

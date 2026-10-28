@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#173d35" />
+    <title>Bếp Nhà | Quản trị</title>
+    <link rel="stylesheet" href="css/manage.css?v=20261025-3" />
+  </head>
+  <body>
+    <aside class="side">
+      <a class="brand" href="#dashboard"
+        ><b>BN</b><span>BẾP NHÀ<small>QUẢN LÝ NHÀ HÀNG</small></span></a
+      >
+      <nav id="nav">
+        <a href="#dashboard">Tổng quan</a><a href="#table-map">Sơ đồ bàn</a
+        ><a href="#reservations">Đặt bàn</a><a href="#orders">Đơn hàng</a
+        ><a href="#kitchen">Bếp</a><a href="#menu">Thực đơn</a
+        ><a href="#customers">Tài khoản</a><a href="index.html">Website</a>
+      </nav>
+      <button id="logout" class="quiet">Đăng xuất</button>
+    </aside>
+    <main>
+      <header>
+        <div>
+          <small id="subtitle">BẾP NHÀ · QUẢN TRỊ</small>
+          <h1 id="title">Tổng quan</h1>
+        </div>
+        <button id="reload" class="quiet">↻ Làm mới</button>
+      </header>
+      <section id="app" aria-live="polite"></section>
+    </main>
+    <dialog id="login">
+      <form id="login-form">
+        <h2>Đăng nhập quản trị</h2>
+        <p>Dùng tài khoản nhân viên đã được cấp.</p>
+        <label
+          >Tài khoản<input
+            name="identifier"
+            autocomplete="username"
+            required /></label
+        ><label
+          >Mật khẩu<input
+            name="password"
+            type="password"
+            autocomplete="current-password"
+            required /></label
+        ><button class="primary">Đăng nhập</button>
+        <p id="login-error" class="error"></p>
+      </form>
+    </dialog>
+    <dialog id="account-dialog" class="dialog-wide">
+      <form id="account-form"></form>
+    </dialog>
+    <div id="toast" role="status"></div>
+    <script src="js/manage.js?v=20261027-3" defer></script>
+  </body>
+</html>
