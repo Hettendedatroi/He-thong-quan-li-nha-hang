@@ -252,6 +252,7 @@ export class BillsService {
     assertBranchAccess(user, bill.branchId);
     if (bill.parentBillId) throw new BadRequestException('Không thể tách hóa đơn con');
     if (bill.status !== 'OPEN' || bill.paidAmount > 0) throw new BadRequestException('Chỉ tách được hóa đơn chưa thanh toán');
+    await this.assertBillCurrent(this.prisma, bill.id, bill.sessionId);
 
     let weights: number[];
     let groups: (typeof bill.lines)[] = [];
@@ -341,6 +342,7 @@ export class BillsService {
       if (bill.status === 'SPLIT') throw new BadRequestException('Hóa đơn đã tách, hãy thanh toán từng hóa đơn con');
       // US-8 AC3: hóa đơn Đã thanh toán không sửa / thu thêm được
       if (bill.status !== 'OPEN') throw new BadRequestException('Hóa đơn không ở trạng thái chờ thanh toán');
+      await this.assertBillCurrent(tx, bill.parentBillId ?? bill.id, bill.sessionId);
 
       const remaining = bill.total - bill.paidAmount;
       if (dto.method !== 'CASH' && dto.amount > remaining) {
@@ -395,6 +397,21 @@ export class BillsService {
     });
     const result = await this.getAndEmit(user, bill.parentBillId ?? billId);
     return { bill: result, paidAmount: payAmount, change, fullyPaid, sessionClosed: !!rootPaid };
+  }
+
+  /** US-2 AC4, US-8 AC1: khách gọi thêm sau khi lập hóa đơn thì phải lập lại, không để sót tiền món mới */
+  private async assertBillCurrent(db: Prisma.TransactionClient, rootBillId: number, sessionId: number) {
+    const [lines, items] = await Promise.all([
+      db.billLine.findMany({ where: { billId: rootBillId }, select: { orderItemId: true } }),
+      db.orderItem.findMany({
+        where: { status: { not: 'CANCELLED' }, order: { sessionId, status: { not: 'PENDING_CONFIRM' } } },
+        select: { id: true },
+      }),
+    ]);
+    const billed = new Set(lines.map((l) => l.orderItemId));
+    if (items.some((i) => !billed.has(i.id))) {
+      throw new ConflictException('Bàn có món mới sau khi lập hóa đơn, vui lòng lập lại hóa đơn trước khi thu tiền');
+    }
   }
 
   /** FR-WAT-16: hủy hóa đơn (quyền nâng cao) */

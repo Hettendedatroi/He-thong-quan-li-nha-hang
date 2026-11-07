@@ -47,6 +47,11 @@ export class OrdersService {
   /** Tạo đơn: chốt giá theo thời điểm gọi (giá theo ngày + happy hour) */
   async createOrder(session: TableSession, inputs: OrderItemInputDto[], opts: CreateOrderOptions) {
     if (!inputs.length) throw new BadRequestException('Đơn hàng chưa có món nào');
+    // US-2 AC4: mọi đơn phải vào cùng một hóa đơn - hóa đơn đã tách / đã thu một phần thì không nhận thêm món
+    const paying = await this.prisma.bill.count({
+      where: { sessionId: session.id, OR: [{ status: 'SPLIT' }, { status: 'OPEN', paidAmount: { gt: 0 } }] },
+    });
+    if (paying) throw new ConflictException('Bàn đang thanh toán, không thể gọi thêm món. Vui lòng liên hệ nhân viên');
     const now = new Date();
     const menuIds = inputs.filter((i) => i.menuItemId).map((i) => i.menuItemId!);
     const comboIds = inputs.filter((i) => i.comboId).map((i) => i.comboId!);
@@ -258,9 +263,19 @@ export class OrdersService {
     if (!CHANGEABLE_STATUSES.includes(item.status)) {
       throw new BadRequestException('Bếp đã bắt đầu chế biến, không thể thay đổi món');
     }
+    await this.assertNotBilled(itemId);
+    // DoD A-06: đổi số lượng thì tính lại giảm giá theo khuyến mãi đã chốt lúc gọi món
+    const promotion =
+      dto.quantity && item.promotionId
+        ? await this.prisma.promotion.findUnique({ where: { id: item.promotionId } })
+        : null;
     const updated = await this.prisma.orderItem.update({
       where: { id: itemId },
-      data: { quantity: dto.quantity, note: dto.note },
+      data: {
+        quantity: dto.quantity,
+        note: dto.note,
+        discountAmount: promotion ? this.promotions.calcDiscount(promotion, item.unitPrice * dto.quantity!, dto.quantity) : undefined,
+      },
     });
     await this.audit.log({
       userId: user.id,
@@ -366,14 +381,19 @@ export class OrdersService {
     return payload;
   }
 
+  /** US-8 AC1, AC3: món đã nằm trong hóa đơn thì không đổi / hủy được, tránh tiền lệch với hóa đơn */
+  private async assertNotBilled(itemId: number) {
+    const billed = await this.prisma.billLine.count({
+      where: { orderItemId: itemId, bill: { status: { in: ['OPEN', 'SPLIT', 'PAID'] } } },
+    });
+    if (billed) throw new BadRequestException('Món đã nằm trong hóa đơn, hãy hủy hóa đơn trước');
+  }
+
   private async doCancel(item: Awaited<ReturnType<OrdersService['getItem']>>, reason: string, actorId: number | null) {
     if (!CHANGEABLE_STATUSES.includes(item.status)) {
       throw new BadRequestException('Bếp đã bắt đầu chế biến, không thể hủy món');
     }
-    const billed = await this.prisma.billLine.count({
-      where: { orderItemId: item.id, bill: { status: { in: ['OPEN', 'SPLIT', 'PAID'] } } },
-    });
-    if (billed) throw new BadRequestException('Món đã nằm trong hóa đơn, hãy hủy hóa đơn trước');
+    await this.assertNotBilled(item.id);
     const updated = await this.prisma.orderItem.update({
       where: { id: item.id },
       data: { status: 'CANCELLED', cancelReason: reason, cancelledById: actorId },

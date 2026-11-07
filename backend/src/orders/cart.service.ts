@@ -1,6 +1,8 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { TableSession } from '@prisma/client';
 import { PricingService } from '../menu/pricing.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { PromotionsService } from '../promotions/promotions.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { TableSessionsService } from '../tables/table-sessions.service';
 import { CartItemDto, MAX_ITEM_QUANTITY, UpdateCartItemDto } from './dto/orders.dto';
@@ -12,12 +14,13 @@ export class CartService {
     private readonly prisma: PrismaService,
     private readonly sessions: TableSessionsService,
     private readonly pricing: PricingService,
+    private readonly promotions: PromotionsService,
     private readonly realtime: RealtimeService,
   ) {}
 
   async get(token: string) {
     const session = await this.sessions.getByToken(token);
-    return this.build(session.id);
+    return this.build(session);
   }
 
   async add(token: string, dto: CartItemDto) {
@@ -51,7 +54,7 @@ export class CartService {
         },
       });
     }
-    return this.broadcast(session.id, session.token);
+    return this.broadcast(session);
   }
 
   async update(token: string, id: number, dto: UpdateCartItemDto) {
@@ -59,37 +62,47 @@ export class CartService {
     const item = await this.prisma.cartItem.findFirst({ where: { id, sessionId: session.id } });
     if (!item) throw new NotFoundException('Không tìm thấy món trong giỏ');
     await this.prisma.cartItem.update({ where: { id }, data: dto });
-    return this.broadcast(session.id, session.token);
+    return this.broadcast(session);
   }
 
   async remove(token: string, id: number) {
     const session = await this.sessions.getByToken(token);
     await this.prisma.cartItem.deleteMany({ where: { id, sessionId: session.id } });
-    return this.broadcast(session.id, session.token);
+    return this.broadcast(session);
   }
 
   async clear(token: string) {
     const session = await this.sessions.getByToken(token);
     await this.prisma.cartItem.deleteMany({ where: { sessionId: session.id } });
-    return this.broadcast(session.id, session.token);
+    return this.broadcast(session);
   }
 
-  private async broadcast(sessionId: number, token: string) {
-    const cart = await this.build(sessionId);
-    this.realtime.toSession(token, 'cart.updated', cart);
+  private async broadcast(session: TableSession) {
+    const cart = await this.build(session);
+    this.realtime.toSession(session.token, 'cart.updated', cart);
     return cart;
   }
 
-  private async build(sessionId: number) {
+  /** US-2 AC1, DoD A-06: tổng giỏ tính cùng công thức với đơn (giá theo ngày + khuyến mãi tự động) */
+  private async build(session: TableSession) {
     const now = new Date();
-    const holiday = await this.pricing.isHoliday(now);
+    const [holiday, promos] = await Promise.all([
+      this.pricing.isHoliday(now),
+      this.promotions.activeAutoPromotions(session.branchId, now),
+    ]);
     const items = await this.prisma.cartItem.findMany({
-      where: { sessionId },
+      where: { sessionId: session.id },
       orderBy: { id: 'asc' },
       include: { menuItem: { include: { priceRules: true } }, combo: true },
     });
     const lines = items.map((i) => {
       const unitPrice = i.menuItem ? this.pricing.effectivePrice(i.menuItem, now, holiday) : (i.combo?.price ?? 0);
+      const { discount } = this.promotions.bestItemDiscount(promos, {
+        menuItemId: i.menuItemId,
+        categoryId: i.menuItem?.categoryId,
+        unitPrice,
+        quantity: i.quantity,
+      });
       return {
         id: i.id,
         menuItemId: i.menuItemId,
@@ -100,7 +113,8 @@ export class CartService {
         unitPrice,
         quantity: i.quantity,
         note: i.note,
-        amount: unitPrice * i.quantity,
+        discountAmount: discount,
+        amount: unitPrice * i.quantity - discount,
       };
     });
     return { items: lines, total: lines.reduce((s, l) => s + l.amount, 0) };

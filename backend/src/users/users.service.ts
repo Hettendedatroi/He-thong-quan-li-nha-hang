@@ -6,9 +6,16 @@ import type { AuthUser } from '../common/types/auth-user';
 import { randomCode } from '../common/utils/codes';
 import { paged, toSkipTake } from '../common/utils/pagination';
 import { parseDateRange } from '../common/utils/time';
+import { PERMISSIONS, ROLE_CODES } from '../common/constants/permissions';
 import { AuditService } from '../core/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditLogQueryDto, CreateUserDto, ListUsersQueryDto, UpdateUserDto } from './dto/users.dto';
+
+/**
+ * Quyền vận hành người quản lý tài khoản được gán cho nhân viên dù bản thân không dùng
+ * (US-18 AC1: quản lý tạo tài khoản Nhân viên bếp nhưng không tự thao tác màn hình bếp - US-7 AC2)
+ */
+const DELEGABLE_PERMISSIONS: string[] = [PERMISSIONS.KITCHEN_UPDATE];
 
 /** FR-ADM-01, FR-ADM-03, FR-ADM-04 */
 @Injectable()
@@ -20,7 +27,10 @@ export class UsersService {
 
   async list(q: ListUsersQueryDto) {
     const where: Prisma.UserWhereInput = {
-      ...(q.roleCode ? { role: { code: q.roleCode } } : {}),
+      AND: [
+        q.roleCode ? { role: { code: q.roleCode } } : {},
+        q.staffOnly ? { role: { code: { not: ROLE_CODES.CUSTOMER } } } : {},
+      ],
       ...(q.branchId ? { branchId: q.branchId } : {}),
       ...(q.status ? { status: q.status } : {}),
       ...(q.search
@@ -217,7 +227,7 @@ export class UsersService {
    */
   private assertCanGrant(actor: AuthUser, role: Pick<Role, 'permissions'>) {
     if (actor.permissions.includes('*')) return;
-    if (role.permissions.some((p) => p === '*' || !actor.permissions.includes(p))) {
+    if (role.permissions.some((p) => p === '*' || (!actor.permissions.includes(p) && !DELEGABLE_PERMISSIONS.includes(p)))) {
       throw new ForbiddenException('Không thể quản lý tài khoản có quyền cao hơn bạn');
     }
   }
