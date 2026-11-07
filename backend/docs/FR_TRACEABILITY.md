@@ -155,3 +155,13 @@ Các quy tắc dưới đây đi theo Acceptance Criteria trong `Productbacklog.
 | DoD B-07 | Migration chạy được trên DB trống và DB đã có dữ liệu | Migration `remove_table_ready_status` chuyển bàn READY → AVAILABLE trước khi đổi enum |
 | US-20 | Lọc theo món / sao / ngày; điểm trung bình từng món; ≤ 2 sao gắn cờ | `GET /feedback/dish-reviews?menuItemId=&minRating=&maxRating=&from=&to=&flagged=` → `items[].isFlagged`, `dishAverages` |
 | US-15 AC3 | Dữ liệu mẫu: 1 quản lý, 2 phục vụ, 1 bếp, 10 món, 8 bàn | `prisma/seed.ts` |
+| US-2 AC1, DoD A-06 | Tổng giỏ tính cả khuyến mãi tự động, khớp với tổng đơn | `CartService.build` |
+| US-2 AC4, US-8 AC1 | Gọi thêm sau khi lập hóa đơn thì phải lập lại mới thu tiền được (409); hóa đơn đã tách / đã thu một phần thì không nhận thêm món (409) | `BillsService.assertBillCurrent`, `OrdersService.createOrder` |
+| US-8 AC1, AC3 | Món đã nằm trong hóa đơn không đổi / hủy được; đổi số lượng trước khi lập hóa đơn thì tính lại giảm giá | `OrdersService.assertNotBilled`, `OrdersService.updateItem` |
+| DoD A-03, A-04 | Lỗi dữ liệu đầu vào báo bằng tiếng Việt, mỗi trường một câu | `common/validation/validation-exception.factory.ts` |
+| NFR-03 | Giới hạn đăng nhập theo IP thật của từng khách sau proxy, không lách được bằng `X-Forwarded-For` giả | `TRUST_PROXY_HOPS`, `main.ts` |
+| DoD A-01, F-03, F-04 | Kiểm thử theo AC Sprint 1 và Sprint 2 (kèm hồi quy) | `npm run test:e2e`, `test/sprint1.e2e.mjs`, `test/sprint2.e2e.mjs`, `docs/SPRINT_MAP.md` |
+| US-17 AC2, US-1 AC1 | QR mở trang thực đơn `{PUBLIC_WEB_URL}/menu?table={qrToken}`; trang gọi `POST /public/tables/{qrToken}/session` để lấy số bàn | `BranchesService.tableQr`; `nginx.conf` (`try_files $uri $uri.html`) |
+| US-17 AC1 | Số bàn trùng báo `Số bàn "X" đã tồn tại` (409), kể cả khi sửa bàn | `BranchesService.assertTableCodeFree` |
+| US-18 AC1 | Quản lý tạo / gán được vai trò Phục vụ, Bếp, Quản lý; không gán được vai trò quản trị | `DELEGABLE_PERMISSIONS`, `UsersService.assertCanGrant` |
+| US-18 | Danh sách chỉ nhân viên: `GET /admin/users?staffOnly=true` | `ListUsersQueryDto.staffOnly` |

@@ -83,6 +83,8 @@ Dữ liệu mẫu còn có: 1 nhà hàng, 3 khu vực (Trong nhà, Ngoài trời
 | `npm run start:dev` | Chạy dev, tự reload |
 | `npm run build` / `npm run start:prod` | Build và chạy bản production |
 | `npm run typecheck` | Kiểm tra lỗi TypeScript |
+| `npm run test:e2e` | Kiểm thử theo AC Sprint 1 + 2 (server đang chạy, DB vừa seed; xem `docs/SPRINT_MAP.md`) |
+| `npm run test:sprint1` / `npm run test:sprint2` | Kiểm thử riêng từng sprint |
 | `npm run prisma:migrate -- --name <ten>` | Tạo migration mới sau khi sửa `schema.prisma` |
 | `npm run prisma:studio` | Giao diện xem / sửa dữ liệu trên trình duyệt |
 | `npm run db:reset` | Xóa sạch DB, chạy lại migration + seed (chỉ dùng khi dev) |
