@@ -102,6 +102,37 @@ export class ReservationsService {
     return { available: false, startAt: start, endAt: end, tables: [], alternatives: { otherZones, timeSlots } };
   }
 
+  /** Tỷ lệ bàn đã có đặt chỗ trong khung giờ được chọn, không trả thông tin khách ra endpoint công khai. */
+  async occupancy(dto: AvailabilityQueryDto) {
+    await this.getBranch(dto.branchId);
+    const start = new Date(dto.startAt);
+    const policy = await this.settings.get('reservationPolicy');
+    const end = addMinutes(start, policy.defaultDurationMinutes);
+    const [totalTables, reservations] = await Promise.all([
+      this.prisma.diningTable.count({
+        where: { branchId: dto.branchId, isActive: true, mergedIntoId: null, zone: { isActive: true } },
+      }),
+      this.prisma.reservation.findMany({
+        where: {
+          branchId: dto.branchId,
+          tableId: { not: null },
+          status: { in: HOLDING },
+          startAt: { lt: end },
+          endAt: { gt: start },
+        },
+        select: { tableId: true },
+        distinct: ['tableId'],
+      }),
+    ]);
+    const bookedTables = Math.min(totalTables, reservations.length);
+    return {
+      totalTables,
+      bookedTables,
+      availableTables: Math.max(0, totalTables - bookedTables),
+      percentBooked: totalTables ? Math.round((bookedTables / totalTables) * 100) : 0,
+    };
+  }
+
   async findAvailableTables(db: Db, q: SlotQuery) {
     const tables = await db.diningTable.findMany({
       where: {
@@ -157,8 +188,13 @@ export class ReservationsService {
         where: { branchId: branch.id, customerPhone: phone, status: { in: HOLDING }, startAt: { lt: end }, endAt: { gt: start } },
       });
       if (duplicate) throw new ConflictException(`Số điện thoại này đã có đặt bàn ${duplicate.code} vào khung giờ này`);
-      const tables = await this.findAvailableTables(tx, { ...dto, start, end });
-      const table = dto.tableId ? tables.find((t) => t.id === dto.tableId) : tables[0];
+      const preferredTables = await this.findAvailableTables(tx, { ...dto, start, end });
+      let table = dto.tableId ? preferredTables.find((t) => t.id === dto.tableId) : preferredTables[0];
+      // Khu vực khách chọn là ưu tiên; nếu khu vực đó hết bàn, tự xếp bàn trống phù hợp ở khu vực khác.
+      if (!table && !dto.tableId && dto.locationType) {
+        const otherAreas = await this.findAvailableTables(tx, { ...dto, zoneId: undefined, locationType: undefined, start, end });
+        table = otherAreas[0];
+      }
       if (!table) {
         noTableMessage = dto.tableId
           ? 'Bàn đã chọn không còn trống vào giờ này'
@@ -171,7 +207,7 @@ export class ReservationsService {
           branchId: branch.id,
           tableId: table.id,
           customerId: user?.roleCode === 'CUSTOMER' ? user.id : null,
-          zonePreference: dto.locationType ?? table.zone.locationType,
+          zonePreference: table.zone.locationType,
           partySize: dto.partySize,
           startAt: start,
           endAt: end,
@@ -208,6 +244,7 @@ export class ReservationsService {
     return {
       ...this.present(reservation),
       qrCode: await this.qrDataUrl(reservation.code),
+      areaAdjusted: !!dto.locationType && reservation.table?.zone.locationType !== dto.locationType,
       nextStep: needsDeposit ? 'PAY_DEPOSIT' : needsApproval ? 'WAIT_FOR_APPROVAL' : 'DONE',
     };
   }

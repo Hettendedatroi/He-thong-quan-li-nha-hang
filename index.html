@@ -8,14 +8,14 @@
   </head>
   <body>
     <header class="site-header">
-      <a class="brand" href="index.html"
+      <a class="brand" href="/"
         ><span class="brand-mark">BN</span
         ><span><b>BẾP NHÀ</b><small>Quán ăn gia đình</small></span></a
       >
       <nav>
-        <a class="active" href="index.html">Đặt bàn</a
-        ><a href="menu.html">Thực đơn</a
-        ><a href="admin-dashboard.html">Quản lý</a>
+        <a class="active" href="/">Đặt bàn</a
+        ><a href="/menu">Thực đơn</a
+        ><a href="/manage#dashboard">Quản lý</a>
       </nav>
       <button class="icon-button" data-theme-toggle aria-label="Đổi giao diện">
         ☼
@@ -120,20 +120,39 @@
             <span class="eyebrow">Đặt món trước</span>
             <h3>Bạn muốn bữa ăn sẵn sàng khi tới?</h3>
             <p>Chọn món từ thực đơn và thêm vào ghi chú đặt bàn.</p>
-            <a class="button light" href="menu.html"
+            <a class="button light" href="/menu"
               >Xem thực đơn <span>→</span></a
             >
           </div>
           <div class="mini-panel">
-            <span class="eyebrow">Hôm nay tại Bếp Nhà</span>
-            <div class="stat-line"><b>86%</b><span>bàn đã được đặt</span></div>
-            <div class="progress"><i style="width: 86%"></i></div>
-            <p class="muted">Còn 4 khung giờ đẹp lúc 20:00</p>
+            <span class="eyebrow">Tình trạng bàn theo giờ bạn chọn</span>
+            <div class="stat-line"><b id="booking-occupancy-percent">—%</b><span>bàn đã được đặt</span></div>
+            <div class="progress"><i id="booking-occupancy-bar" style="width: 0%"></i></div>
+            <p class="muted" id="booking-occupancy-caption">Đang cập nhật số bàn trống…</p>
           </div>
         </aside>
       </section>
     </main>
+    <dialog class="booking-confirmation" id="booking-result" aria-labelledby="booking-result-title">
+      <div class="booking-confirmation-card">
+        <button class="booking-result-close" type="button" data-close-booking aria-label="Đóng">×</button>
+        <span class="eyebrow">Đặt bàn thành công</span>
+        <h2 id="booking-result-title">Thông tin bàn của bạn</h2>
+        <p class="booking-result-intro" id="booking-result-intro">Nhà hàng đã tự động chọn bàn còn trống phù hợp với số khách.</p>
+        <div class="booking-result-table"><small>BÀN ĐƯỢC CHỌN</small><strong id="booking-result-table">—</strong><span id="booking-result-zone"></span></div>
+        <dl class="booking-result-details">
+          <div><dt>Mã đặt bàn</dt><dd id="booking-result-code">—</dd></div>
+          <div><dt>Khách</dt><dd id="booking-result-guest">—</dd></div>
+          <div><dt>Thời gian</dt><dd id="booking-result-time">—</dd></div>
+          <div><dt>Số khách</dt><dd id="booking-result-count">—</dd></div>
+          <div><dt>Trạng thái</dt><dd id="booking-result-status">—</dd></div>
+        </dl>
+        <img class="booking-result-qr" id="booking-result-qr" alt="Mã QR thông tin đặt bàn" hidden />
+        <p class="booking-result-footnote">Hãy lưu mã đặt bàn hoặc chụp màn hình để xuất trình khi đến nhà hàng.</p>
+        <button class="button primary full" type="button" data-close-booking>Đã hiểu</button>
+      </div>
+    </dialog>
     <div class="toast" id="toast"></div>
-    <script src="js/restaurant.js?v=20261027-2"></script>
+    <script src="js/restaurant.js?v=20261103-2"></script>
   </body>
 </html>

@@ -31,6 +31,12 @@ export class PublicReservationsController {
     return this.reservations.checkAvailability(q);
   }
 
+  /** Bàn đã được đặt trong khung giờ khách đang chọn */
+  @Get('occupancy')
+  occupancy(@Query() q: AvailabilityQueryDto) {
+    return this.reservations.occupancy(q);
+  }
+
   /** FR-01, FR-03, FR-06: đặt bàn (khách vãng lai hoặc đã đăng nhập) */
   @Post()
   create(@Body() dto: CreateReservationDto, @CurrentUser() user?: AuthUser) {

@@ -8,6 +8,8 @@
     dlg = $("#login");
   let token = localStorage.getItem("bn_access"),
     me = null,
+    realtimeSocket = null,
+    realtimeLoader = null,
     userRows = [],
     branchRows = null,
     menuRows = [],
@@ -84,6 +86,29 @@
     t.classList.add("show");
     setTimeout(() => t.classList.remove("show"), 2600);
   };
+  function connectRealtime() {
+    if (!token) return;
+    const connect = () => {
+      if (!window.io) return;
+      realtimeSocket?.disconnect();
+      realtimeSocket = window.io(API.slice(0, -4), { auth: { token } });
+      const refreshReservations = () => {
+        if (["#table-map", "#reservations"].includes(location.hash)) {
+          responseCache.clear();
+          load();
+        }
+      };
+      realtimeSocket.on("reservation.created", refreshReservations);
+      realtimeSocket.on("reservation.updated", refreshReservations);
+    };
+    if (window.io) return connect();
+    if (!realtimeLoader) {
+      realtimeLoader = document.createElement("script");
+      realtimeLoader.src = API.slice(0, -4) + "/socket.io/socket.io.js";
+      realtimeLoader.onload = connect;
+      document.head.appendChild(realtimeLoader);
+    }
+  }
   async function api(path, options = {}) {
     const method = (options.method || "GET").toUpperCase(),
       key = `${method}:${path}`;
@@ -217,7 +242,13 @@
       RESERVED: "Đã đặt",
       CLEANING: "Đang dọn dẹp",
     };
-    app.innerHTML = `<div class="account-toolbar"><div><h2>Sơ đồ bàn</h2><p class="muted">Theo dõi tình trạng bàn của chi nhánh.</p></div><button class="quiet" data-reload>Làm mới</button></div><div class="grid">${tables.map((item) => `<article class="card"><strong>${esc(item.code || item.name || "Bàn")}</strong><span class="badge">${esc(labels[item.status] || item.status || "Chưa rõ")}</span><small>${esc(item.zoneName || item.zone?.name || "")}</small></article>`).join("") || '<div class="panel empty">Chưa có dữ liệu bàn.</div>'}</div>`;
+    const cards = tables.map((item) => {
+      const r = item.upcomingReservation;
+      const card = '<article class="card"><strong>' + esc(item.code || item.name || "Bàn") + '</strong><span class="badge">' + esc(labels[item.displayStatus || item.status] || item.displayStatus || item.status || "Chưa rõ") + '</span><small>' + esc(item.zoneName || item.zone?.name || "") + ' · ' + esc(item.capacity || 0) + ' chỗ</small>' +
+        (r ? '<div class="reservation-on-table"><b>Khách đã đặt</b><span>' + esc(r.customerName) + '</span><span>' + esc(r.customerPhone) + '</span><span>' + esc(r.partySize) + ' khách · ' + esc(new Date(r.startAt).toLocaleString("vi-VN", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })) + '</span><small>Mã ' + esc(r.code) + ' · ' + (r.status === "PENDING" ? "Chờ xác nhận" : "Đã xác nhận") + '</small></div>' : "") + '</article>';
+      return card;
+    }).join("");
+    app.innerHTML = '<div class="account-toolbar"><div><h2>Sơ đồ bàn</h2><p class="muted">Theo dõi tình trạng bàn và thông tin khách đặt.</p></div><button class="quiet" data-reload>Làm mới</button></div><div class="grid">' + (cards || '<div class="panel empty">Chưa có dữ liệu bàn.</div>') + '</div>';
   }
 
   async function dashboard() {
@@ -365,7 +396,7 @@
     const rows = list
       .map(
         (x) =>
-          `<tr><td><b>${esc(x.name)}</b><br><small>${esc(x.description || "")}</small></td><td>${esc(x.category?.name || categoryRows.find((c) => c.id === x.categoryId)?.name || "—")}</td><td>${money(x.price)}</td><td><span class="badge">${x.isAvailable ? "Còn món" : "Tạm hết"} · ${x.isVisible ? "Đang hiện" : "Đang ẩn"}</span></td><td class="user-actions"><button class="action alt" data-menu-edit="${x.id}">Sửa</button>${act(x.isAvailable ? "Tạm hết" : "Còn món", `/menu/items/${x.id}/availability`, "PATCH", { isAvailable: !x.isAvailable })}${act(x.isVisible ? "Ẩn món" : "Hiện món", `/menu/items/${x.id}/visibility`, "PATCH", { isVisible: !x.isVisible })}</td></tr>`,
+          `<tr><td><b>${esc(x.name)}</b><br><small>${esc(x.description || "")}</small></td><td>${esc(x.category?.name || categoryRows.find((c) => c.id === x.categoryId)?.name || "—")}</td><td>${money(x.price)}</td><td><span class="badge">${x.isAvailable ? "Còn món" : "Tạm hết"} · ${x.isVisible ? "Đang hiện" : "Đang ẩn"}</span></td><td class="user-actions"><button class="action alt" data-menu-edit="${x.id}">Sửa</button>${act(x.isAvailable ? "Tạm hết" : "Còn món", `/menu/items/${x.id}/availability`, "PATCH", { isAvailable: !x.isAvailable })}${act(x.isVisible ? "Ẩn món" : "Hiện món", `/menu/items/${x.id}/visibility`, "PATCH", { isVisible: !x.isVisible })}<button class="action alt" data-menu-delete="${x.id}">Xóa</button></td></tr>`,
       )
       .join("");
     app.innerHTML = `<div class="account-toolbar"><div><h2>Thực đơn</h2><p class="muted">${menuRows.length} món · Tìm kiếm và lọc tại chỗ, chỉ gọi API khi cập nhật.</p></div><button class="primary" data-menu-new>＋ Thêm món</button></div><div class="account-filters"><input id="menu-search" type="search" placeholder="Tìm món ăn"><select id="menu-category"><option value="">Tất cả danh mục</option>${categoryRows.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join("")}</select><select id="menu-availability"><option value="">Tất cả tình trạng</option><option value="true">Còn món</option><option value="false">Tạm hết</option></select></div>${table(["Món ăn", "Danh mục", "Giá bán", "Tình trạng", "Thao tác"], rows)}`;
@@ -645,13 +676,19 @@
   });
   document.addEventListener("click", async (e) => {
     const b = e.target.closest(
-      "[data-menu-new],[data-menu-edit],[data-reservation-new],[data-reservation-reject],[data-priority]",
+      "[data-menu-new],[data-menu-edit],[data-menu-delete],[data-reservation-new],[data-reservation-reject],[data-priority]",
     );
     if (!b) return;
     try {
       if (b.hasAttribute("data-menu-new")) openMenuForm();
       else if (b.hasAttribute("data-menu-edit"))
         openMenuForm(menuRows.find((x) => String(x.id) === b.dataset.menuEdit));
+      else if (b.hasAttribute("data-menu-delete")) {
+        if (!confirm("Xóa món này khỏi thực đơn khách hàng?")) return;
+        await api(`/menu/items/${b.dataset.menuDelete}`, { method: "DELETE" });
+        toast("Đã xóa món khỏi thực đơn");
+        await load();
+      }
       else if (b.hasAttribute("data-reservation-new"))
         await openReservationForm();
       else if (b.hasAttribute("data-reservation-reject")) {
@@ -712,6 +749,7 @@
       token = data.accessToken;
       localStorage.setItem("bn_access", token);
       me = data.user || null;
+      connectRealtime();
       dlg.close();
       location.hash = roleHome[me?.role?.code || me?.roleCode] || "dashboard";
       await load();
@@ -727,6 +765,8 @@
     }
     token = null;
     me = null;
+    realtimeSocket?.disconnect();
+    realtimeSocket = null;
     responseCache.clear();
     localStorage.removeItem("bn_access");
     dlg.showModal();
@@ -740,6 +780,7 @@
     api("/auth/me")
       .then((x) => {
         me = x;
+        connectRealtime();
         load();
       })
       .catch(() => {

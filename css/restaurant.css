@@ -798,6 +798,30 @@ textarea:focus {
   opacity: 1;
   transform: none;
 }
+.booking-confirmation {
+  border: 0;
+  padding: 0;
+  width: min(440px, calc(100vw - 28px));
+  max-height: min(90vh, 760px);
+  border-radius: 18px;
+  color: var(--ink);
+  box-shadow: 0 24px 80px #14261f44;
+}
+.booking-confirmation::backdrop { background: #10231dcc; }
+.booking-confirmation-card { position: relative; padding: 28px; }
+.booking-confirmation-card h2 { margin: 5px 30px 4px 0; font: 600 25px "Playfair Display", serif; }
+.booking-result-intro,.booking-result-footnote { color: var(--muted); font-size: 13px; }
+.booking-result-close { position: absolute; top: 14px; right: 16px; border: 0; background: transparent; font-size: 26px; color: var(--muted); }
+.booking-result-table { display: grid; justify-items: center; gap: 2px; margin: 18px 0; padding: 16px; border-radius: 12px; color: #fff; background: var(--ink); }
+.booking-result-table small { letter-spacing: .14em; opacity: .75; font-size: 10px; }
+.booking-result-table strong { font: 600 32px "Playfair Display", serif; }
+.booking-result-details { display: grid; gap: 0; margin: 0; }
+.booking-result-details div { display: flex; justify-content: space-between; gap: 14px; padding: 8px 0; border-bottom: 1px solid #e8ece8; font-size: 13px; }
+.booking-result-details dt { color: var(--muted); }
+.booking-result-details dd { margin: 0; text-align: right; font-weight: 600; }
+.booking-result-qr { display: block; width: 112px; height: 112px; margin: 14px auto 0; }
+.booking-result-qr[hidden] { display: none; }
+.booking-result-footnote { margin: 12px 0 18px; }
 @media (max-width: 900px) {
   .app-sidebar {
     width: 72px;

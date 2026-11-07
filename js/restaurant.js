@@ -13,6 +13,36 @@
     node.classList.add("show");
     window.setTimeout(() => node.classList.remove("show"), 2800);
   };
+  const bookingResult = $("#booking-result");
+  const showBookingConfirmation = (result, guest) => {
+    const time = result.startAt
+      ? new Date(result.startAt).toLocaleString("vi-VN", {
+          dateStyle: "medium",
+          timeStyle: "short",
+        })
+      : "—";
+    $("#booking-result-code").textContent = result.code || "—";
+    $("#booking-result-guest").textContent = `${guest.name} · ${guest.phone}`;
+    $("#booking-result-time").textContent = time;
+    $("#booking-result-count").textContent = `${result.partySize || guest.partySize} người`;
+    $("#booking-result-status").textContent =
+      result.status === "PENDING" ? "Chờ nhà hàng xác nhận" : "Đã xác nhận";
+    $("#booking-result-table").textContent = result.table?.code
+      ? `Bàn ${result.table.code}`
+      : "Nhà hàng sẽ sắp xếp bàn";
+    $("#booking-result-zone").textContent = result.table?.zone?.name || "";
+    $("#booking-result-intro").textContent = result.areaAdjusted
+      ? "Khu vực bạn chọn đã hết bàn; nhà hàng đã tự chọn bàn trống gần nhất phù hợp với số khách."
+      : "Nhà hàng đã tự động chọn bàn còn trống phù hợp với số khách.";
+    const qr = $("#booking-result-qr");
+    qr.hidden = !result.qrCode;
+    if (result.qrCode) qr.src = result.qrCode;
+    if (bookingResult?.showModal) bookingResult.showModal();
+    else toast(`Đặt bàn ${result.code} thành công · Bàn ${result.table?.code || "sẽ được sắp xếp"}`);
+  };
+  $$('[data-close-booking]').forEach((button) =>
+    button.addEventListener("click", () => bookingResult?.close()),
+  );
   const today = new Date();
   const dateField = $('input[type="date"]');
   const localDate = (date) => {
@@ -20,6 +50,34 @@
     return new Date(date.getTime() - offset).toISOString().slice(0, 10);
   };
   if (dateField) dateField.value = localDate(today);
+  let occupancyRequest = 0;
+  const refreshOccupancy = async () => {
+    const date = dateField?.value;
+    const time = $('[name="time"]')?.value;
+    if (!date || !time) return;
+    const requestId = ++occupancyRequest;
+    const startAt = new Date(`${date}T${time}:00+07:00`).toISOString();
+    const params = new URLSearchParams({ branchId: "1", startAt, partySize: "1" });
+    try {
+      const response = await fetch(`${api}/public/reservations/occupancy?${params}`);
+      if (!response.ok) throw Error("Không tải được tình trạng bàn");
+      const data = await response.json();
+      if (requestId !== occupancyRequest) return;
+      $("#booking-occupancy-percent").textContent = `${data.percentBooked}%`;
+      $("#booking-occupancy-bar").style.width = `${data.percentBooked}%`;
+      $("#booking-occupancy-caption").textContent = data.totalTables
+        ? `Đã đặt ${data.bookedTables}/${data.totalTables} bàn · Còn ${data.availableTables} bàn vào ${time}`
+        : "Chi nhánh chưa có bàn hoạt động.";
+    } catch {
+      if (requestId !== occupancyRequest) return;
+      $("#booking-occupancy-percent").textContent = "—%";
+      $("#booking-occupancy-bar").style.width = "0%";
+      $("#booking-occupancy-caption").textContent = "Chưa tải được số liệu bàn.";
+    }
+  };
+  dateField?.addEventListener("change", refreshOccupancy);
+  $('[name="time"]')?.addEventListener("change", refreshOccupancy);
+  refreshOccupancy();
   let guests = 2;
   $$("[data-step]").forEach((button) =>
     button.addEventListener("click", () => {
@@ -78,9 +136,11 @@
         toast(message);
         return;
       }
-      toast(
-        `Đặt bàn thành công · Mã ${result.code} · ${result.status === "PENDING" ? "Chờ xác nhận" : "Đã xác nhận"}`,
-      );
+      showBookingConfirmation(result, {
+        name: String(data.get("name") || "").trim(),
+        phone: String(data.get("phone") || "").trim(),
+        partySize: guests,
+      });
       bookingForm.reset();
       if (dateField) dateField.value = localDate(new Date());
       guests = 2;

@@ -71,10 +71,12 @@ export class UpdateCategoryDto extends PartialType(CreateCategoryDto) {}
 
 export class CreateMenuItemDto {
   @IsInt()
+  @Min(1, { message: 'Vui lòng chọn danh mục hợp lệ' })
   categoryId: number;
 
   @IsString()
   @IsNotEmpty()
+  @Matches(/\S/, { message: 'Tên món không được để trống' })
   name: string;
 
   @IsOptional()
