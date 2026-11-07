@@ -3,6 +3,7 @@ import { Transform } from 'class-transformer';
 import {
   ArrayUnique,
   IsArray,
+  IsBoolean,
   IsEmail,
   IsEnum,
   IsInt,
@@ -32,6 +33,12 @@ export class ListUsersQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsString()
   search?: string;
+
+  /** US-18: true = chỉ lấy tài khoản nhân viên (bỏ tài khoản khách hàng) */
+  @IsOptional()
+  @Transform(({ obj, key }) => obj[key] === true || obj[key] === 'true')
+  @IsBoolean()
+  staffOnly?: boolean;
 }
 
 export class CreateUserDto {
@@ -42,7 +49,7 @@ export class CreateUserDto {
 
   /** US-18: tên đăng nhập duy nhất */
   @Transform(({ value }) => (typeof value === 'string' ? value.trim().toLowerCase() : value))
-  @Matches(USERNAME_REGEX, { message: 'Tên đăng nhập 3-30 ký tự, chỉ gồm chữ thường, số, dấu chấm, gạch dưới' })
+  @Matches(USERNAME_REGEX, { message: 'Tên đăng nhập 3-30 ký tự, chỉ gồm chữ cái không dấu, số, dấu chấm (.) hoặc gạch dưới (_)' })
   username: string;
 
   @IsOptional()
@@ -76,7 +83,7 @@ export class UpdateUserDto {
   /** US-18: tên đăng nhập duy nhất */
   @IsOptional()
   @Transform(({ value }) => (typeof value === 'string' ? value.trim().toLowerCase() : value))
-  @Matches(USERNAME_REGEX, { message: 'Tên đăng nhập 3-30 ký tự, chỉ gồm chữ thường, số, dấu chấm, gạch dưới' })
+  @Matches(USERNAME_REGEX, { message: 'Tên đăng nhập 3-30 ký tự, chỉ gồm chữ cái không dấu, số, dấu chấm (.) hoặc gạch dưới (_)' })
   username?: string;
 
   @IsOptional()

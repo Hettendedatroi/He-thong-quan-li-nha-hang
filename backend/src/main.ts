@@ -6,9 +6,13 @@ import helmet from 'helmet';
 import { mkdirSync } from 'fs';
 import { join } from 'path';
 import { AppModule } from './app.module';
+import { validationExceptionFactory } from './common/validation/validation-exception.factory';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // Số proxy đứng trước API (Cloudflare Tunnel, nginx...): lấy đúng IP khách từ X-Forwarded-For để hạn mức tính theo từng người.
+  // Không dùng `true`: khách tự gửi X-Forwarded-For giả là lách được giới hạn số lần đăng nhập sai
+  app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS ?? 1));
 
   app.setGlobalPrefix('api');
   const origins = process.env.CORS_ORIGINS?.split(',').map((o) => o.trim()).filter(Boolean);
@@ -20,6 +24,7 @@ async function bootstrap() {
       whitelist: true,
       transform: true,
       transformOptions: { enableImplicitConversion: true },
+      exceptionFactory: validationExceptionFactory,
     }),
   );
 

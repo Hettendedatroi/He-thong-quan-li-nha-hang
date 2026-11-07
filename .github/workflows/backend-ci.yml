@@ -60,14 +60,12 @@ jobs:
           npx prisma migrate deploy
           npx prisma db seed
 
-      - name: Smoke test (khởi động server và đăng nhập bằng tài khoản seed)
+      - name: Smoke test và kiểm thử theo AC Sprint 1 + 2
         run: |
           PORT=3000 node dist/main &
           for i in $(seq 1 30); do
-            curl -sf -X POST http://localhost:3000/api/auth/login \
-              -H 'Content-Type: application/json' \
-              -d '{"identifier":"manager","password":"Password@123"}' \
-              | grep -q accessToken && echo "Server OK" && exit 0
+            curl -sf http://localhost:3000/api/public/menu | grep -q categories && up=1 && break
             sleep 1
           done
-          echo "Server không khởi động được" && exit 1
+          [ "$up" = 1 ] || { echo "Server không khởi động được"; exit 1; }
+          BASE_URL=http://localhost:3000 npm run test:e2e

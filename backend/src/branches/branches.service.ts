@@ -94,6 +94,7 @@ export class BranchesService {
   async createTable(actorId: number, dto: CreateTableDto) {
     const zone = await this.prisma.zone.findUnique({ where: { id: dto.zoneId } });
     if (!zone) throw new NotFoundException('Không tìm thấy khu vực');
+    await this.assertTableCodeFree(zone.branchId, dto.code);
     const table = await this.prisma.diningTable.create({
       data: { ...dto, branchId: zone.branchId, qrToken: randomToken(18) },
     });
@@ -107,9 +108,24 @@ export class BranchesService {
       const zone = await this.prisma.zone.findUniqueOrThrow({ where: { id: dto.zoneId } });
       branchId = zone.branchId;
     }
+    if (dto.code) {
+      const current = await this.prisma.diningTable.findUnique({ where: { id } });
+      if (!current) throw new NotFoundException('Không tìm thấy bàn');
+      await this.assertTableCodeFree(branchId ?? current.branchId, dto.code, id);
+    }
     const table = await this.prisma.diningTable.update({ where: { id }, data: { ...dto, branchId } });
     await this.audit.log({ userId: actorId, action: 'table.update', entity: 'DiningTable', entityId: id, data: dto });
     return table;
+  }
+
+  /** US-17 AC1: số bàn là duy nhất trong chi nhánh (kể cả bàn đã xóa mềm vì còn lịch sử) */
+  private async assertTableCodeFree(branchId: number, code: string, exceptId?: number) {
+    const dup = await this.prisma.diningTable.findFirst({ where: { branchId, code, ...(exceptId ? { id: { not: exceptId } } : {}) } });
+    if (dup) {
+      throw new ConflictException(
+        dup.isActive ? `Số bàn "${code}" đã tồn tại` : `Số bàn "${code}" thuộc một bàn đã xóa (còn lịch sử), vui lòng chọn số khác`,
+      );
+    }
   }
 
   /** Xóa mềm nếu bàn đã có lịch sử (để giữ dữ liệu báo cáo) */
@@ -142,12 +158,12 @@ export class BranchesService {
     return this.tableQr(table.id);
   }
 
-  /** FR-07: ảnh QR (data URL) để in dán lên bàn - trỏ tới web khách hàng */
+  /** FR-07, US-17 AC2: ảnh QR (data URL) để in dán lên bàn - mở trang thực đơn của đúng bàn đó */
   async tableQr(id: number) {
     const table = await this.prisma.diningTable.findUnique({ where: { id } });
     if (!table) throw new NotFoundException('Không tìm thấy bàn');
     const webUrl = this.config.get<string>('PUBLIC_WEB_URL') ?? 'http://localhost:5173';
-    const url = `${webUrl.replace(/\/$/, '')}/t/${table.qrToken}`;
+    const url = `${webUrl.replace(/\/$/, '')}/menu?table=${encodeURIComponent(table.qrToken)}`;
     return { tableId: table.id, code: table.code, url, qrToken: table.qrToken, qrDataUrl: await QRCode.toDataURL(url, { width: 400 }) };
   }
 }
