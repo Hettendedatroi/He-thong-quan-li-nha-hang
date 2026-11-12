@@ -144,6 +144,13 @@ export class ReservationsController {
     return this.reservations.reject(user, id, dto.reason);
   }
 
+  /** Nhân viên xác nhận khách đã dùng xong bàn và thanh toán */
+  @Post(':id/complete')
+  @RequirePermissions(PERMISSIONS.RESERVATION_MANAGE)
+  complete(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number) {
+    return this.reservations.complete(user, id);
+  }
+
   /** FR-WAT-09: check-in thủ công */
   @Post(':id/check-in')
   @RequirePermissions(PERMISSIONS.RESERVATION_MANAGE)

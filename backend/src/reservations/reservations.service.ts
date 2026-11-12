@@ -238,6 +238,7 @@ export class ReservationsService {
     await this.notifyCustomer(reservation, reservation.status === 'CONFIRMED' ? 'RESERVATION_CONFIRMED' : 'RESERVATION_CREATED');
     // FR-WAT-01: báo phục vụ ngay khi có đặt bàn mới
     this.realtime.toBranchStaff(branch.id, 'reservation.created', this.present(reservation));
+    this.realtime.toAvailability(branch.id);
     if (byStaff) {
       await this.audit.log({ userId: user!.id, action: 'reservation.create', entity: 'Reservation', entityId: reservation.id });
     }
@@ -436,6 +437,39 @@ export class ReservationsService {
     return this.present(updated);
   }
 
+  /** Nhân viên đánh dấu khách đã ăn xong và thanh toán xong */
+  async complete(user: AuthUser, id: number) {
+    const r = await this.findById(id);
+    assertBranchAccess(user, r.branchId);
+    if (!['CONFIRMED', 'CHECKED_IN'].includes(r.status)) {
+      throw new BadRequestException('Chỉ hoàn tất được đặt bàn đã xác nhận hoặc đã check-in');
+    }
+    if (r.tableId) {
+      const openSessions = await this.prisma.tableSession.count({
+        where: { tableId: r.tableId, status: 'OPEN' },
+      });
+      if (openSessions) throw new ConflictException('Bàn còn phiên đang mở. Hãy thanh toán hóa đơn trước');
+    }
+    const result = await this.prisma.$transaction(async (tx) => {
+      const changed = await tx.reservation.updateMany({
+        where: { id, status: r.status },
+        data: { status: 'COMPLETED' },
+      });
+      if (!changed.count) throw new ConflictException('Trạng thái đặt bàn vừa thay đổi, hãy tải lại danh sách');
+      if (r.tableId) {
+        await tx.diningTable.updateMany({
+          where: { id: r.tableId, status: { in: ['RESERVED', 'OCCUPIED', 'CLEANING'] } },
+          data: { status: 'AVAILABLE' },
+        });
+      }
+      return tx.reservation.findUniqueOrThrow({ where: { id }, include: INCLUDE_FULL });
+    });
+    await this.audit.log({ userId: user.id, action: 'reservation.complete', entity: 'Reservation', entityId: id });
+    if (r.tableId) await this.sessions.emitTable(r.tableId);
+    this.emitUpdated(result);
+    return this.present(result);
+  }
+
   async staffCancel(user: AuthUser, id: number, reason?: string) {
     const r = await this.findById(id);
     assertBranchAccess(user, r.branchId);
@@ -548,6 +582,7 @@ export class ReservationsService {
     const payload = this.present(r);
     this.realtime.toBranchStaff(r.branchId, 'reservation.updated', payload);
     this.realtime.toReservation(r.code, 'reservation.updated', payload);
+    this.realtime.toAvailability(r.branchId);
     if (r.tableId) void this.sessions.emitTable(r.tableId);
   }
 

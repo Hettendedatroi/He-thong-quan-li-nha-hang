@@ -8,8 +8,10 @@
     dlg = $("#login");
   let token = localStorage.getItem("bn_access"),
     me = null,
+    refreshInFlight = null,
     realtimeSocket = null,
     realtimeLoader = null,
+    realtimeRefreshTimer = null,
     userRows = [],
     branchRows = null,
     menuRows = [],
@@ -29,28 +31,14 @@
     WAITER: "table-map",
     KITCHEN: "kitchen",
   };
-  const rolePages = {
-    ADMIN: [
-      "dashboard",
-      "table-map",
-      "reservations",
-      "orders",
-      "kitchen",
-      "menu",
-      "customers",
-    ],
-    MANAGER: [
-      "dashboard",
-      "table-map",
-      "reservations",
-      "orders",
-      "kitchen",
-      "menu",
-      "customers",
-    ],
-    SENIOR_WAITER: ["table-map", "reservations", "orders"],
-    WAITER: ["table-map", "reservations", "orders"],
-    KITCHEN: ["kitchen", "orders"],
+  const pagePermissions = {
+    "table-map": ["table.view"],
+    reservations: ["reservation.view"],
+    orders: ["order.view"],
+    payments: ["bill.manage"],
+    kitchen: ["kitchen.view"],
+    menu: ["menu.manage", "menu.stock"],
+    customers: ["user.manage"],
   };
   const statusNames = {
     PENDING: "Chờ xác nhận",
@@ -65,6 +53,9 @@
     PREPARING: "Đang chế biến",
     READY: "Sẵn sàng",
     SERVED: "Đã phục vụ",
+    OPEN: "Chờ thanh toán",
+    PAID: "Đã thanh toán",
+    SPLIT: "Đã tách",
   };
   const esc = (s) =>
     String(s ?? "—").replace(
@@ -80,6 +71,11 @@
     );
   const money = (n) => `${Number(n || 0).toLocaleString("vi-VN")} ₫`;
   const statusName = (s) => statusNames[s] || s || "—";
+  const can = (permission) => {
+    const permissions = me?.role?.permissions || [];
+    return permissions.includes("*") || permissions.includes(permission);
+  };
+  const canAny = (permissions) => permissions.some(can);
   const toast = (s) => {
     const t = $("#toast");
     t.textContent = s;
@@ -98,8 +94,33 @@
           load();
         }
       };
+      realtimeSocket.on("connect", refreshReservations);
       realtimeSocket.on("reservation.created", refreshReservations);
       realtimeSocket.on("reservation.updated", refreshReservations);
+      const refreshOrders = () => {
+        if (!["#kitchen", "#orders"].includes(location.hash)) return;
+        clearTimeout(realtimeRefreshTimer);
+        realtimeRefreshTimer = setTimeout(() => {
+          responseCache.clear();
+          load();
+        }, 100);
+      };
+      ["kitchen.order-received", "order.created", "order-item.updated"].forEach((event) =>
+        realtimeSocket.on(event, refreshOrders),
+      );
+      realtimeSocket.on("connect", refreshOrders);
+      realtimeSocket.on("bill.updated", () => {
+        if (location.hash === "#payments") {
+          responseCache.clear();
+          load();
+        }
+      });
+      ["table.updated", "floor.updated"].forEach((event) => realtimeSocket.on(event, () => {
+        if (["#table-map", "#payments"].includes(location.hash)) {
+          responseCache.clear();
+          load();
+        }
+      }));
     };
     if (window.io) return connect();
     if (!realtimeLoader) {
@@ -108,6 +129,42 @@
       realtimeLoader.onload = connect;
       document.head.appendChild(realtimeLoader);
     }
+  }
+  async function refreshAccessToken() {
+    if (refreshInFlight) return refreshInFlight;
+    const refreshToken = localStorage.getItem("bn_refresh");
+    if (!refreshToken) return false;
+    refreshInFlight = (async () => {
+      const refresh = async (value) => {
+        const response = await fetch(`${API}/auth/refresh`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refreshToken: value }),
+        });
+        if (!response.ok) return null;
+        return response.json();
+      };
+      try {
+        let data = await refresh(refreshToken);
+        // Another open tab may have rotated the shared refresh token first.
+        const latestRefresh = localStorage.getItem("bn_refresh");
+        if (!data && latestRefresh && latestRefresh !== refreshToken) data = await refresh(latestRefresh);
+        if (!data?.accessToken || !data?.refreshToken) return false;
+        token = data.accessToken;
+        localStorage.setItem("bn_access", data.accessToken);
+        localStorage.setItem("bn_refresh", data.refreshToken);
+        if (data.user) me = data.user;
+        realtimeSocket?.disconnect();
+        realtimeSocket = null;
+        connectRealtime();
+        return true;
+      } catch {
+        return false;
+      } finally {
+        refreshInFlight = null;
+      }
+    })();
+    return refreshInFlight;
   }
   async function api(path, options = {}) {
     const method = (options.method || "GET").toUpperCase(),
@@ -148,12 +205,17 @@
         lastError || Error("Không thể kết nối máy chủ. Vui lòng thử lại sau.")
       );
     }
+    if (res.status === 401 && path !== "/auth/refresh" && await refreshAccessToken()) {
+      request.headers.Authorization = `Bearer ${token}`;
+      res = await fetch(API + path, request);
+    }
     const body = res.status === 204 ? null : await res.json().catch(() => null);
     if (!res.ok) {
       if (res.status === 401) {
         token = null;
         responseCache.clear();
         localStorage.removeItem("bn_access");
+        localStorage.removeItem("bn_refresh");
         dlg.showModal();
       }
       throw Error(
@@ -184,9 +246,12 @@
       return;
     }
     const role = me?.role?.code || me?.roleCode;
+    const allowedPages = Object.entries(pagePermissions)
+      .filter(([page, permissions]) => canAny(permissions) && (page !== "payments" || canAny(["table.view", "order.view"])))
+      .map(([page]) => page);
+    if (role === "ADMIN" || role === "MANAGER") allowedPages.unshift("dashboard");
     const requestedPage =
-      location.hash.slice(1) || roleHome[role] || "dashboard";
-    const allowedPages = rolePages[role] || [];
+      location.hash.slice(1) || roleHome[role] || allowedPages[0] || "dashboard";
     const page = allowedPages.includes(requestedPage)
       ? requestedPage
       : "forbidden";
@@ -195,6 +260,7 @@
       "table-map": "Sơ đồ bàn",
       reservations: "Đặt bàn",
       orders: "Đơn hàng",
+      payments: "Thanh toán",
       kitchen: "Bếp",
       menu: "Thực đơn",
       customers: "Tài khoản",
@@ -220,6 +286,7 @@
       else if (page === "table-map") await tableMap();
       else if (page === "reservations") await reservations();
       else if (page === "orders") await orders();
+      else if (page === "payments") await payments();
       else if (page === "kitchen") await kitchen();
       else if (page === "menu") await menu();
       else await customers();
@@ -242,13 +309,45 @@
       RESERVED: "Đã đặt",
       CLEANING: "Đang dọn dẹp",
     };
+    const permissions = me?.role?.permissions || [];
+    const canConfigure = permissions.includes("*") || permissions.includes("table.configure");
     const cards = tables.map((item) => {
+      const displayStatus = item.displayStatus || item.status;
       const r = item.upcomingReservation;
-      const card = '<article class="card"><strong>' + esc(item.code || item.name || "Bàn") + '</strong><span class="badge">' + esc(labels[item.displayStatus || item.status] || item.displayStatus || item.status || "Chưa rõ") + '</span><small>' + esc(item.zoneName || item.zone?.name || "") + ' · ' + esc(item.capacity || 0) + ' chỗ</small>' +
-        (r ? '<div class="reservation-on-table"><b>Khách đã đặt</b><span>' + esc(r.customerName) + '</span><span>' + esc(r.customerPhone) + '</span><span>' + esc(r.partySize) + ' khách · ' + esc(new Date(r.startAt).toLocaleString("vi-VN", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })) + '</span><small>Mã ' + esc(r.code) + ' · ' + (r.status === "PENDING" ? "Chờ xác nhận" : "Đã xác nhận") + '</small></div>' : "") + '</article>';
+      const card = '<article class="card"><strong>' + esc(item.code || item.name || "Bàn") + '</strong><span class="badge">' + esc(labels[displayStatus] || displayStatus || "Chưa rõ") + '</span><small>' + esc(item.zoneName || item.zone?.name || "") + ' · ' + esc(item.capacity || 0) + ' chỗ</small>' +
+        (r ? '<div class="reservation-on-table"><b>Khách đã đặt</b><span>' + esc(r.customerName) + '</span><span>' + esc(r.customerPhone) + '</span><span>' + esc(r.partySize) + ' khách · ' + esc(new Date(r.startAt).toLocaleString("vi-VN", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })) + '</span><small>Mã ' + esc(r.code) + ' · ' + (r.status === "PENDING" ? "Chờ xác nhận" : "Đã xác nhận") + '</small></div>' : "") +
+        '<div class="table-card-actions">' + (canConfigure ? `<button class="quiet" data-table-edit="${item.id}" data-zone-id="${item.zoneId || item.zone?.id || ""}" data-code="${esc(item.code || "")}" data-capacity="${Number(item.capacity || 2)}">Sửa bàn</button><button class="quiet" data-table-qr="${item.id}">Mã QR</button>` : "") + '</div></article>';
       return card;
     }).join("");
-    app.innerHTML = '<div class="account-toolbar"><div><h2>Sơ đồ bàn</h2><p class="muted">Theo dõi tình trạng bàn và thông tin khách đặt.</p></div><button class="quiet" data-reload>Làm mới</button></div><div class="grid">' + (cards || '<div class="panel empty">Chưa có dữ liệu bàn.</div>') + '</div>';
+    app.innerHTML = '<div class="account-toolbar"><div><h2>Sơ đồ bàn</h2><p class="muted">Theo dõi bàn và thông tin khách đặt.</p></div><div class="table-map-actions">' + (canConfigure ? '<button class="primary" data-table-new>＋ Thêm bàn</button>' : '') + '<button class="quiet" data-reload>Làm mới</button></div></div><div class="grid">' + (cards || '<div class="panel empty">Chưa có dữ liệu bàn.</div>') + '</div>';
+  }
+
+  async function openTableForm(table) {
+    const zones = await api("/admin/zones");
+    if (!zones.length) throw new Error("Chưa có khu vực bàn. Hãy tạo khu vực trước.");
+    const f = $("#account-form"), editing = !!table;
+    f.dataset.mode = editing ? "table-edit" : "table-create";
+    f.dataset.id = table?.id || "";
+    f.innerHTML = `<h2>${editing ? "Chỉnh sửa bàn" : "Thêm bàn mới"}</h2><p class="hint">Chọn khu vực, mã bàn và sức chứa. Bàn mới sẽ tự có mã QR riêng.</p><div class="dialog-grid"><label class="span-2">Khu vực<select name="zoneId" required>${zones.filter(z => z.isActive).map(z => `<option value="${z.id}" ${Number(table?.zoneId) === z.id ? "selected" : ""}>${esc(z.name)}</option>`).join("")}</select></label><label>Mã bàn<input name="code" maxlength="30" required value="${esc(table?.code || "")}" placeholder="Ví dụ: A09"></label><label>Sức chứa<input name="capacity" type="number" min="1" max="50" value="${Number(table?.capacity || 2)}" required></label></div><div class="dialog-actions"><button type="button" class="secondary" data-close-account>Hủy</button><button class="primary">${editing ? "Lưu thay đổi" : "Tạo bàn"}</button></div><p class="error" id="account-error"></p>`;
+    $("#account-dialog").showModal();
+  }
+
+  async function submitTableForm(e) {
+    e.preventDefault();
+    const f = e.currentTarget, fd = new FormData(f), editing = f.dataset.mode === "table-edit";
+    const body = { zoneId: Number(fd.get("zoneId")), code: String(fd.get("code")).trim(), capacity: Number(fd.get("capacity")) };
+    try {
+      const result = await api(editing ? `/admin/tables/${f.dataset.id}` : "/admin/tables", { method: editing ? "PATCH" : "POST", body: JSON.stringify(body) });
+      $("#account-dialog").close(); responseCache.clear(); toast(editing ? "Đã cập nhật bàn" : "Đã thêm bàn"); await load();
+      if (!editing && result?.id) await showTableQr(result.id);
+    } catch (error) { $("#account-error").textContent = error.message; }
+  }
+
+  async function showTableQr(id) {
+    const result = await api(`/admin/tables/${id}/qr`);
+    const f = $("#account-form"); f.dataset.mode = "table-qr";
+    f.innerHTML = `<h2>Mã QR bàn ${esc(result.code)}</h2><p class="hint">Khách quét mã này để mở đúng bàn, chọn món và gửi đơn.</p><div class="qr-preview"><img src="${esc(result.qrDataUrl)}" alt="Mã QR bàn ${esc(result.code)}"><a href="${esc(result.url)}" target="_blank" rel="noopener">${esc(result.url)}</a></div><div class="dialog-actions"><button type="button" class="secondary" data-close-account>Đóng</button><a class="primary" href="${esc(result.qrDataUrl)}" download="qr-ban-${esc(result.code)}.png">Tải mã QR</a><a class="secondary" href="${esc(result.url)}" target="_blank" rel="noopener">Mở thử</a></div>`;
+    $("#account-dialog").showModal();
   }
 
   async function dashboard() {
@@ -272,16 +371,11 @@
     const rows = list
       .map(
         (x) =>
-          `<tr><td><b>${esc(x.code)}</b></td><td>${esc(x.customerName)}<br><small>${esc(x.customerPhone)}</small></td><td>${esc(x.startAt && new Date(x.startAt).toLocaleString("vi-VN"))}<br>${x.partySize || 0} khách · ${esc(x.branch?.name || "")}</td><td><span class="badge status-${esc(String(x.status).toLowerCase())}">${esc(statusName(x.status))}</span></td><td class="user-actions">${x.status === "PENDING" ? act("Xác nhận", `/reservations/${x.id}/confirm`) : ""}${x.status === "CONFIRMED" ? act("Check-in", `/reservations/${x.id}/check-in`) : ""}${["PENDING", "CONFIRMED"].includes(x.status) ? `<button class="action alt" data-reservation-reject="${x.id}">Từ chối</button>` : ""}</td></tr>`,
+          `<tr><td><b>${esc(x.code)}</b></td><td>${esc(x.customerName)}<br><small>${esc(x.customerPhone)}</small></td><td>${esc(x.startAt && new Date(x.startAt).toLocaleString("vi-VN"))}<br>${x.partySize || 0} khách · ${esc(x.branch?.name || "")}</td><td><span class="badge status-${esc(String(x.status).toLowerCase())}">${esc(statusName(x.status))}</span></td><td class="user-actions">${can("reservation.manage") && x.status === "PENDING" ? act("Xác nhận", `/reservations/${x.id}/confirm`) : ""}${can("reservation.manage") && ["CONFIRMED", "CHECKED_IN"].includes(x.status) ? `<button class="action alt" data-reservation-complete="${x.id}">Ăn xong</button>` : ""}${can("reservation.manage") && ["PENDING", "CONFIRMED"].includes(x.status) ? `<button class="action alt" data-reservation-reject="${x.id}">Từ chối</button>` : ""}</td></tr>`,
       )
       .join("");
-    app.innerHTML = `<div class="account-toolbar"><div><h2>Quản lý đặt bàn</h2><p class="muted">${data.total ?? list.length} lượt đặt · Lọc và tìm kiếm cục bộ, tải dữ liệu một lần.</p></div><button class="quiet" data-reload>Làm mới</button></div><div class="account-filters"><input id="reservation-search" type="search" placeholder="Tìm mã đặt bàn, tên hoặc số điện thoại"><select id="reservation-status"><option value="">Mọi trạng thái</option>${["PENDING", "CONFIRMED", "CHECKED_IN", "COMPLETED", "CANCELLED", "REJECTED", "NO_SHOW"].map((s) => `<option value="${s}">${statusName(s)}</option>`).join("")}</select><input id="reservation-date" type="date" aria-label="Lọc theo ngày"></div>${table(["Mã đặt", "Khách", "Thời gian", "Trạng thái", "Thao tác"], rows)}`;
-    app
-      .querySelector("[data-reload]")
-      .insertAdjacentHTML(
-        "beforebegin",
-        '<button class="primary" data-reservation-new>＋ Tạo lịch đặt</button>',
-      );
+    app.innerHTML = `<div class="account-toolbar"><div><h2>Quản lý đặt bàn</h2><p class="muted">${data.total ?? list.length} lượt đặt · Lịch hoàn tất và bị từ chối có thể xem trong bộ lọc.</p></div><button class="quiet" data-reload>Làm mới</button></div><div class="account-filters"><input id="reservation-search" type="search" placeholder="Tìm mã đặt bàn, tên hoặc số điện thoại"><select id="reservation-status"><option value="ACTIVE">Lịch đang hoạt động</option><option value="">Mọi trạng thái</option>${["PENDING", "CONFIRMED", "CHECKED_IN", "COMPLETED", "CANCELLED", "REJECTED", "NO_SHOW"].map((s) => `<option value="${s}">${statusName(s)}</option>`).join("")}</select><input id="reservation-date" type="date" aria-label="Lọc theo ngày"></div>${table(["Mã đặt", "Khách", "Thời gian", "Trạng thái", "Thao tác"], rows)}`;
+    if (can("reservation.manage")) app.querySelector("[data-reload]").insertAdjacentHTML("beforebegin", '<button class="primary" data-reservation-new>＋ Tạo lịch đặt</button>');
     const apply = () => {
       const q = $("#reservation-search").value.toLocaleLowerCase("vi"),
         st = $("#reservation-status").value,
@@ -295,7 +389,7 @@
                   .toLocaleLowerCase("vi")
                   .includes(q),
               )) &&
-            (!st || x.status === st) &&
+            (st === "ACTIVE" ? ["PENDING", "CONFIRMED", "CHECKED_IN"].includes(x.status) : !st || x.status === st) &&
             (!dt || String(x.startAt || "").slice(0, 10) === dt);
         row.hidden = !matches;
       });
@@ -310,7 +404,7 @@
     const rows = list
       .map(
         (x) =>
-          `<tr><td><b>${esc(x.code || `#${x.id}`)}</b><br><small>${esc(new Date(x.createdAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }))}</small></td><td>${esc(x.table?.code || x.session?.table?.code || "—")}</td><td>${(x.items || []).map((i) => `${esc(i.quantity)} × ${esc(i.name || i.menuItem?.name || i.combo?.name || "Món")}`).join("<br>") || "—"}</td><td><span class="badge">${esc(statusName(x.status))}</span><br><small>Ưu tiên ${x.priority || 0}</small></td><td class="user-actions">${x.status === "PENDING_CONFIRM" ? act("Gửi bếp", `/orders/${x.id}/send-to-kitchen`) : ""}${x.status === "SENT_TO_KITCHEN" ? `<button class="action alt" data-priority="${x.id}" data-level="${(Number(x.priority || 0) + 1) % 3}">Ưu tiên ${(Number(x.priority || 0) + 1) % 3}</button>` : ""}${(
+          `<tr><td><b>${esc(x.code || `#${x.id}`)}</b><br><small>${esc(new Date(x.createdAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }))}</small></td><td>${esc(x.table?.code || x.session?.table?.code || "—")}</td><td>${(x.items || []).map((i) => `${esc(i.quantity)} × ${esc(i.name || i.menuItem?.name || i.combo?.name || "Món")}`).join("<br>") || "—"}</td><td><span class="badge">${esc(statusName(x.status))}</span><br><small>Ưu tiên ${x.priority || 0}</small></td><td class="user-actions">${can("order.manage") && x.status === "PENDING_CONFIRM" ? act("Gửi bếp", `/orders/${x.id}/send-to-kitchen`) : ""}${can("order.manage") && x.status === "SENT_TO_KITCHEN" ? `<button class="action alt" data-priority="${x.id}" data-level="${(Number(x.priority || 0) + 1) % 3}">Ưu tiên ${(Number(x.priority || 0) + 1) % 3}</button>` : ""}${(
             x.items || []
           )
             .filter((i) => i.status === "READY")
@@ -343,6 +437,53 @@
     $("#order-search").oninput = apply;
     $("#order-status").onchange = apply;
   }
+  async function payments() {
+    const sessions = await api("/sessions" + query({ status: "OPEN" }));
+    const rows = sessions.map((s) => `<tr><td><b>Bàn ${esc(s.table?.code || "—")}</b></td><td>${esc(new Date(s.openedAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }))}</td><td>${s.guestCount || 0}</td><td>${s._count?.orders || 0}</td><td>${s.customer?.fullName ? esc(s.customer.fullName) : "—"}</td><td>${s._count?.orders ? `<button class="action" data-bill-session="${s.id}">Lập hóa đơn / thanh toán</button>` : '<span class="muted">Chưa gọi món</span>'}</td></tr>`).join("");
+    app.innerHTML = `<div class="account-toolbar"><div><h2>Bàn đang mở</h2><p class="muted">Chọn bàn để tạo hoặc chỉnh hóa đơn, sau đó xác nhận tiền mặt hoặc chuyển khoản.</p></div><button class="quiet" data-reload>↻ Làm mới</button></div>${table(["Bàn", "Mở lúc", "Khách", "Đơn", "Thành viên", "Thao tác"], rows)}`;
+  }
+  async function openBill(sessionId) {
+    try {
+      const session = await api(`/sessions/${sessionId}`);
+      const current = (session.bills || []).find((b) => b.status === "OPEN" || b.status === "SPLIT");
+      if (current?.status === "SPLIT") throw Error("Hóa đơn đã tách; hãy thanh toán từng hóa đơn con trong mục này.");
+      const bill = current ? await api(`/bills/${current.id}`) : await api("/bills", { method: "POST", body: JSON.stringify({ sessionId: Number(sessionId) }) });
+      renderBillDialog(bill, session);
+    } catch (err) { toast(err.message); }
+  }
+  function renderBillDialog(bill, session) {
+    const f = $("#account-form"), remaining = Math.max(0, bill.total - bill.paidAmount), canPay = can("payment.confirm"), canEdit = can("bill.manage") && bill.status === "OPEN" && !bill.paidAmount;
+    f.dataset.mode = "bill"; f.dataset.sessionId = session.id; f.dataset.billId = bill.id;
+    const lines = (bill.lines || []).map((l) => `<tr><td>${esc(l.name)} × ${esc(l.quantity)}</td><td>${money(l.amount)}</td></tr>`).join("");
+    const payments = (bill.payments || []).map((p) => `<small>${esc(p.method === "CASH" ? "Tiền mặt" : p.method === "BANK_TRANSFER" ? "Chuyển khoản" : p.method)} · ${money(p.amount)} · ${esc(new Date(p.createdAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }))}</small>`).join("<br>");
+    const editFields = canEdit ? `<h3>Thông tin hóa đơn</h3><div class="dialog-grid"><label>Mã voucher<input name="voucherCode" value="${esc(bill.voucherCode || "")}"></label><label>SĐT thành viên<input name="customerPhone" value="${esc(bill.customer?.phone || "")}"></label><label>Điểm đổi<input name="redeemPoints" type="number" min="0" value="${Number(bill.pointsRedeemed || 0)}"></label>${can("bill.discount_override") ? `<label>Giảm giá đặc biệt (₫)<input name="manualDiscount" type="number" min="0" value="${Number(bill.manualDiscount || 0)}"></label><label class="span-2">Lý do giảm giá<input name="manualDiscountReason" maxlength="300" value="${esc(bill.manualDiscountReason || "")}"></label>` : ""}</div>` : "";
+    const paymentFields = canPay && bill.status === "OPEN" && remaining > 0 ? `<h3>Ghi nhận thanh toán</h3><div class="dialog-grid"><label>Phương thức<select name="method"><option value="CASH">Tiền mặt</option><option value="BANK_TRANSFER">Chuyển khoản</option></select></label><label>Số tiền nhận (₫)<input name="amount" type="number" min="1" value="${remaining}" required></label><label class="span-2">Mã giao dịch (nếu chuyển khoản)<input name="reference" maxlength="100"></label><label class="span-2">Ghi chú<input name="note" maxlength="300"></label></div>` : "";
+    f.innerHTML = `<h2>${canEdit ? "Hóa đơn" : "Thanh toán hóa đơn"} · Bàn ${esc(session.table?.code || "—")}</h2><p class="hint">Mã ${esc(bill.code)} · ${esc(statusName(bill.status))}</p>${editFields}<div class="panel"><table><thead><tr><th>Món</th><th>Thành tiền</th></tr></thead><tbody>${lines}</tbody></table><p>Tạm tính: <b>${money(bill.subtotal)}</b> · Giảm món: ${money(bill.itemDiscount)} · Voucher: ${money(bill.voucherDiscount)} · Phí: ${money(bill.serviceCharge)} · VAT: ${money(bill.vatAmount)}</p><h2>Tổng: ${money(bill.total)} · Đã thu: ${money(bill.paidAmount)} · Còn lại: ${money(remaining)}</h2>${payments}</div>${paymentFields}<div class="dialog-actions"><button type="button" class="secondary" data-close-account>Đóng</button>${canEdit ? '<button class="primary">Cập nhật hóa đơn</button>' : ""}${canPay && bill.status === "OPEN" && remaining > 0 ? '<button type="button" class="primary" data-bill-pay>Xác nhận thanh toán</button>' : ""}</div><p class="error" id="account-error"></p>`;
+    $("#account-dialog").showModal();
+  }
+  async function submitBillForm(e) {
+    e.preventDefault();
+    const f = e.currentTarget, fd = new FormData(f), body = { sessionId: Number(f.dataset.sessionId) };
+    for (const key of ["voucherCode", "customerPhone", "manualDiscountReason"]) if (fd.get(key)) body[key] = String(fd.get(key)).trim();
+    if (Number(fd.get("redeemPoints"))) body.redeemPoints = Number(fd.get("redeemPoints"));
+    if (can("bill.discount_override") && Number(fd.get("manualDiscount"))) body.manualDiscount = Number(fd.get("manualDiscount"));
+    try {
+      const bill = await api("/bills", { method: "POST", body: JSON.stringify(body) });
+      responseCache.clear();
+      const session = await api(`/sessions/${body.sessionId}`);
+      renderBillDialog(bill, session);
+      toast("Đã cập nhật hóa đơn");
+    } catch (err) { $("#account-error").textContent = err.message; }
+  }
+  async function payBill(button) {
+    const f = $("#account-form"), fd = new FormData(f), method = fd.get("method");
+    try {
+      const result = await api(`/bills/${f.dataset.billId}/payments`, { method: "POST", body: JSON.stringify({ method, amount: Number(fd.get("amount")), reference: fd.get("reference") || undefined, note: fd.get("note") || undefined }) });
+      responseCache.clear();
+      if (result.sessionClosed) { $("#account-dialog").close(); toast(`Đã thanh toán${result.change ? ` · Tiền thối ${money(result.change)}` : ""}; bàn đã đóng`); await load(); }
+      else { toast("Đã ghi nhận khoản thanh toán"); await openBill(f.dataset.sessionId); }
+    } catch (err) { $("#account-error").textContent = err.message; }
+  }
   async function kitchen() {
     const data = await api("/kitchen/queue"),
       orders = data.orders || [],
@@ -351,11 +492,11 @@
         .flatMap((o) =>
           (o.items || []).map(
             (x) =>
-              `<tr><td><b>${esc(o.code || `#${o.id}`)}</b><br><small>${o.waitingMinutes || 0} phút · ${esc(o.createdByWaiter || "")}</small></td><td>${esc(o.table?.code || "—")}<br>${o.guestCount || 0} khách</td><td><b>${esc(x.name || "Món")} × ${esc(x.quantity)}</b>${x.note ? `<br><small>Ghi chú: ${esc(x.note)}</small>` : ""}</td><td><span class="badge">${esc(statusName(x.status))}</span></td><td>${x.status === "PENDING" ? act("Nhận món", `/kitchen/items/${x.id}/status`, "PATCH", { status: "RECEIVED" }) : x.status === "RECEIVED" ? act("Bắt đầu", `/kitchen/items/${x.id}/status`, "PATCH", { status: "PREPARING" }) : x.status === "PREPARING" ? act("Hoàn thành", `/kitchen/items/${x.id}/status`, "PATCH", { status: "READY" }) : x.status === "READY" ? act("Đã giao", `/kitchen/items/${x.id}/status`, "PATCH", { status: "SERVED" }) : ""}</td></tr>`,
+              `<tr><td><b>${esc(o.code || `#${o.id}`)}</b><br><small>${o.waitingMinutes || 0} phút · ${esc(o.createdByWaiter || "")}</small>${o.note ? `<br><small>Ghi chú đơn: ${esc(o.note)}</small>` : ""}${o.reservationNote ? `<br><small>Yêu cầu: ${esc(o.reservationNote)}</small>` : ""}</td><td>${esc(o.table?.code || "—")}<br>${o.guestCount || 0} khách</td><td><b>${esc(x.name || "Món")} × ${esc(x.quantity)}</b>${x.note ? `<br><small>Ghi chú: ${esc(x.note)}</small>` : ""}</td><td><span class="badge">${esc(statusName(x.status))}</span></td><td>${can("kitchen.update") && x.status === "PENDING" ? act("Đã nhận", `/kitchen/items/${x.id}/status`, "PATCH", { status: "RECEIVED" }) : can("kitchen.update") && x.status === "RECEIVED" ? act("Đang chuẩn bị", `/kitchen/items/${x.id}/status`, "PATCH", { status: "PREPARING" }) : can("kitchen.update") && x.status === "PREPARING" ? act("Sẵn sàng", `/kitchen/items/${x.id}/status`, "PATCH", { status: "READY" }) : can("order.manage") && x.status === "READY" ? act("Đã giao", `/kitchen/items/${x.id}/status`, "PATCH", { status: "SERVED" }) : ""}</td></tr>`,
           ),
         )
         .join("");
-    app.innerHTML = `<div class="account-toolbar"><div><h2>Hàng đợi bếp</h2><p class="muted">Cập nhật món theo thứ tự nhận. Dữ liệu chỉ tải khi mở màn hình hoặc bấm làm mới.</p></div><button class="quiet" data-reload>↻ Làm mới</button></div><div class="grid kitchen-summary">${[
+    app.innerHTML = `<div class="account-toolbar"><div><h2>Hàng đợi bếp</h2><p class="muted">Đơn cũ nhất ở đầu hàng đợi · Đồng bộ trực tiếp khi có đơn mới hoặc đổi trạng thái.</p></div><button class="quiet" data-reload>↻ Làm mới</button></div><div class="grid kitchen-summary">${[
       ["PENDING", "Chờ nhận"],
       ["RECEIVED", "Đã nhận"],
       ["PREPARING", "Đang làm"],
@@ -396,10 +537,10 @@
     const rows = list
       .map(
         (x) =>
-          `<tr><td><b>${esc(x.name)}</b><br><small>${esc(x.description || "")}</small></td><td>${esc(x.category?.name || categoryRows.find((c) => c.id === x.categoryId)?.name || "—")}</td><td>${money(x.price)}</td><td><span class="badge">${x.isAvailable ? "Còn món" : "Tạm hết"} · ${x.isVisible ? "Đang hiện" : "Đang ẩn"}</span></td><td class="user-actions"><button class="action alt" data-menu-edit="${x.id}">Sửa</button>${act(x.isAvailable ? "Tạm hết" : "Còn món", `/menu/items/${x.id}/availability`, "PATCH", { isAvailable: !x.isAvailable })}${act(x.isVisible ? "Ẩn món" : "Hiện món", `/menu/items/${x.id}/visibility`, "PATCH", { isVisible: !x.isVisible })}<button class="action alt" data-menu-delete="${x.id}">Xóa</button></td></tr>`,
+          `<tr><td><b>${esc(x.name)}</b><br><small>${esc(x.description || "")}</small></td><td>${esc(x.category?.name || categoryRows.find((c) => c.id === x.categoryId)?.name || "—")}</td><td>${money(x.price)}</td><td><span class="badge">${x.isAvailable ? "Còn món" : "Tạm hết"} · ${x.isVisible ? "Đang hiện" : "Đang ẩn"}</span></td><td class="user-actions">${can("menu.manage") ? `<button class="action alt" data-menu-edit="${x.id}">Sửa</button>` : ""}${can("menu.stock") ? act(x.isAvailable ? "Tạm hết" : "Còn món", `/menu/items/${x.id}/availability`, "PATCH", { isAvailable: !x.isAvailable }) : ""}${can("menu.manage") ? `${act(x.isVisible ? "Ẩn món" : "Hiện món", `/menu/items/${x.id}/visibility`, "PATCH", { isVisible: !x.isVisible })}<button class="action alt" data-menu-delete="${x.id}">Xóa</button>` : ""}</td></tr>`,
       )
       .join("");
-    app.innerHTML = `<div class="account-toolbar"><div><h2>Thực đơn</h2><p class="muted">${menuRows.length} món · Tìm kiếm và lọc tại chỗ, chỉ gọi API khi cập nhật.</p></div><button class="primary" data-menu-new>＋ Thêm món</button></div><div class="account-filters"><input id="menu-search" type="search" placeholder="Tìm món ăn"><select id="menu-category"><option value="">Tất cả danh mục</option>${categoryRows.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join("")}</select><select id="menu-availability"><option value="">Tất cả tình trạng</option><option value="true">Còn món</option><option value="false">Tạm hết</option></select></div>${table(["Món ăn", "Danh mục", "Giá bán", "Tình trạng", "Thao tác"], rows)}`;
+    app.innerHTML = `<div class="account-toolbar"><div><h2>Thực đơn</h2><p class="muted">${menuRows.length} món · Tìm kiếm và lọc tại chỗ, chỉ gọi API khi cập nhật.</p></div>${can("menu.manage") ? '<button class="primary" data-menu-new>＋ Thêm món</button>' : ""}</div><div class="account-filters"><input id="menu-search" type="search" placeholder="Tìm món ăn"><select id="menu-category"><option value="">Tất cả danh mục</option>${categoryRows.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join("")}</select><select id="menu-availability"><option value="">Tất cả tình trạng</option><option value="true">Còn món</option><option value="false">Tạm hết</option></select></div>${table(["Món ăn", "Danh mục", "Giá bán", "Tình trạng", "Thao tác"], rows)}`;
     $("#menu-search").oninput = renderMenu;
     $("#menu-category").onchange = renderMenu;
     $("#menu-availability").onchange = renderMenu;
@@ -488,7 +629,7 @@
     const f = $("#account-form");
     f.dataset.mode = item.id ? "menu-edit" : "menu-create";
     f.dataset.id = item.id || "";
-    f.innerHTML = `<h2>${item.id ? "Sửa món" : "Thêm món"}</h2><div class="dialog-grid"><label class="span-2">Tên món<input name="name" required maxlength="120" value="${esc(item.name || "")}"></label><label>Danh mục<select name="categoryId" required>${categoryRows.map((c) => `<option value="${c.id}" ${item.categoryId === c.id ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label><label>Giá (₫)<input name="price" type="number" min="1" step="1000" required value="${esc(item.price || "")}"></label><label>Thời gian chế biến (phút)<input name="prepTimeMinutes" type="number" min="1" value="${esc(item.prepTimeMinutes || "")}"></label><label>Ảnh (đường dẫn)<input name="imageUrl" value="${esc(item.imageUrl || "")}"></label><label class="span-2">Mô tả<textarea name="description" rows="3">${esc(item.description || "")}</textarea></label>${item.id ? `<label><input name="isAvailable" type="checkbox" ${item.isAvailable ? "checked" : ""}> Đang có món</label><label><input name="isVisible" type="checkbox" ${item.isVisible ? "checked" : ""}> Hiện trên thực đơn</label>` : ""}</div><div class="dialog-actions"><button type="button" class="secondary" data-close-account>Hủy</button><button class="primary">${item.id ? "Lưu món" : "Tạo món"}</button></div><p class="error" id="account-error"></p>`;
+    f.innerHTML = `<h2>${item.id ? "Sửa món" : "Thêm món"}</h2><div class="dialog-grid"><label class="span-2">Tên món<input name="name" required maxlength="120" value="${esc(item.name || "")}"></label><label>Danh mục<select name="categoryId" required>${categoryRows.map((c) => `<option value="${c.id}" ${item.categoryId === c.id ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label><label>Giá (₫)<input name="price" type="number" min="1" step="1" required value="${esc(item.price || "")}"></label><label>Thời gian chế biến (phút)<input name="prepTimeMinutes" type="number" min="1" value="${esc(item.prepTimeMinutes || "")}"></label><label>Ảnh (đường dẫn)<input name="imageUrl" value="${esc(item.imageUrl || "")}"></label><label class="span-2">Mô tả<textarea name="description" rows="3">${esc(item.description || "")}</textarea></label>${item.id ? `<label><input name="isAvailable" type="checkbox" ${item.isAvailable ? "checked" : ""}> Đang có món</label><label><input name="isVisible" type="checkbox" ${item.isVisible ? "checked" : ""}> Hiện trên thực đơn</label>` : ""}</div><div class="dialog-actions"><button type="button" class="secondary" data-close-account>Hủy</button><button class="primary">${item.id ? "Lưu món" : "Tạo món"}</button></div><p class="error" id="account-error"></p>`;
     $("#account-dialog").showModal();
   }
   async function submitMenuForm(e) {
@@ -628,6 +769,24 @@
     }
     if (e.target.closest("[data-close-account]"))
       return $("#account-dialog").close();
+    if (e.target.closest("[data-table-new]")) {
+      try { await openTableForm(); } catch (err) { toast(err.message); }
+      return;
+    }
+    const tableEdit = e.target.closest("[data-table-edit]");
+    if (tableEdit) {
+      try { await openTableForm({ id: Number(tableEdit.dataset.tableEdit), zoneId: Number(tableEdit.dataset.zoneId), code: tableEdit.dataset.code, capacity: Number(tableEdit.dataset.capacity) }); } catch (err) { toast(err.message); }
+      return;
+    }
+    const tableQr = e.target.closest("[data-table-qr]");
+    if (tableQr) {
+      try { await showTableQr(Number(tableQr.dataset.tableQr)); } catch (err) { toast(err.message); }
+      return;
+    }
+    const billSession = e.target.closest("[data-bill-session]");
+    if (billSession) return openBill(Number(billSession.dataset.billSession));
+    const billPay = e.target.closest("[data-bill-pay]");
+    if (billPay) return payBill(billPay);
     const ub = e.target.closest("[data-user-action]");
     if (ub) {
       const action = ub.dataset.userAction,
@@ -676,7 +835,7 @@
   });
   document.addEventListener("click", async (e) => {
     const b = e.target.closest(
-      "[data-menu-new],[data-menu-edit],[data-menu-delete],[data-reservation-new],[data-reservation-reject],[data-priority]",
+      "[data-menu-new],[data-menu-edit],[data-menu-delete],[data-reservation-new],[data-reservation-complete],[data-reservation-reject],[data-priority]",
     );
     if (!b) return;
     try {
@@ -691,6 +850,12 @@
       }
       else if (b.hasAttribute("data-reservation-new"))
         await openReservationForm();
+      else if (b.hasAttribute("data-reservation-complete")) {
+        if (!confirm("Xác nhận khách đã ăn xong và thanh toán?")) return;
+        await api(`/reservations/${b.dataset.reservationComplete}/complete`, { method: "POST" });
+        toast("Đã hoàn tất lượt đặt bàn");
+        await load();
+      }
       else if (b.hasAttribute("data-reservation-reject")) {
         const reason = prompt("Lý do từ chối lịch đặt bàn?");
         if (reason === null || !reason.trim()) return;
@@ -714,7 +879,9 @@
   });
   $("#account-form").addEventListener("submit", async (e) => {
     const mode = e.currentTarget.dataset.mode;
-    if (mode === "reset") {
+    if (mode === "bill") submitBillForm(e);
+    else if (mode === "table-create" || mode === "table-edit") submitTableForm(e);
+    else if (mode === "reset") {
       e.preventDefault();
       const f = e.currentTarget,
         id = f.dataset.id,
@@ -748,6 +915,7 @@
       });
       token = data.accessToken;
       localStorage.setItem("bn_access", token);
+      localStorage.setItem("bn_refresh", data.refreshToken);
       me = data.user || null;
       connectRealtime();
       dlg.close();
@@ -769,6 +937,7 @@
     realtimeSocket = null;
     responseCache.clear();
     localStorage.removeItem("bn_access");
+    localStorage.removeItem("bn_refresh");
     dlg.showModal();
   };
   $("#reload").onclick = () => {
@@ -776,6 +945,25 @@
     load();
   };
   addEventListener("hashchange", load);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && ["#table-map", "#reservations"].includes(location.hash)) {
+      responseCache.clear();
+      load();
+    }
+  });
+  addEventListener("storage", (event) => {
+    if (event.key !== "bn_access") return;
+    token = event.newValue;
+    responseCache.clear();
+    if (!token) {
+      me = null;
+      realtimeSocket?.disconnect();
+      realtimeSocket = null;
+      if (!dlg.open) dlg.showModal();
+      return;
+    }
+    api("/auth/me").then((user) => { me = user; connectRealtime(); load(); }).catch(() => {});
+  });
   if (token)
     api("/auth/me")
       .then((x) => {
@@ -786,6 +974,7 @@
       .catch(() => {
         token = null;
         localStorage.removeItem("bn_access");
+        localStorage.removeItem("bn_refresh");
         dlg.showModal();
       });
   else dlg.showModal();

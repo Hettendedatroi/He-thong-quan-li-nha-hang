@@ -98,6 +98,17 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     return { ok: true };
   }
 
+  /** Public booking page subscribes only to anonymous table availability changes. */
+  @SubscribeMessage('subscribe.reservation-availability')
+  async subscribeReservationAvailability(@ConnectedSocket() client: Socket, @MessageBody() body: { branchId: number }) {
+    const branchId = Number(body?.branchId);
+    if (!Number.isInteger(branchId) || branchId < 1) return { ok: false };
+    const branch = await this.prisma.branch.findUnique({ where: { id: branchId }, select: { id: true } });
+    if (!branch) return { ok: false };
+    await client.join(rooms.availability(branchId));
+    return { ok: true };
+  }
+
   /** Khách theo dõi phiên bàn (trạng thái món, hóa đơn - FR-14, FR-23) */
   @SubscribeMessage('subscribe.session')
   async subscribeSession(@ConnectedSocket() client: Socket, @MessageBody() body: { sessionToken: string }) {

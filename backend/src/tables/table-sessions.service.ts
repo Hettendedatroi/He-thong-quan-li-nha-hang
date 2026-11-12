@@ -12,6 +12,7 @@ import type { AuthUser } from '../common/types/auth-user';
 import { AuditService } from '../core/audit.service';
 import { SettingsService } from '../core/settings.service';
 import { normalizePhone } from '../auth/auth.service';
+import { addMinutes } from '../common/utils/time';
 import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { refreshOrderStatus } from '../orders/order-status.util';
@@ -64,10 +65,18 @@ export class TableSessionsService {
     const existing = await this.findOpenSession(table.id);
     if (existing) {
       let session = existing;
-      if (opts.customerId && !existing.customerId) {
+      const canAttachReservation = !!opts.reservationId && !existing.reservationId &&
+        (await this.prisma.order.count({ where: { sessionId: existing.id } })) === 0;
+      if ((opts.customerId && !existing.customerId) || canAttachReservation) {
         session = await this.prisma.tableSession.update({
           where: { id: existing.id },
-          data: { customerId: opts.customerId },
+          data: {
+            ...(opts.customerId && !existing.customerId ? { customerId: opts.customerId } : {}),
+            ...(canAttachReservation ? {
+              reservationId: opts.reservationId,
+              guestCount: opts.guestCount ?? existing.guestCount,
+            } : {}),
+          },
         });
       }
       const status = occupy ? await this.markOccupied(table.id) : table.status;
@@ -137,8 +146,26 @@ export class TableSessionsService {
     const scanned = await this.prisma.diningTable.findUnique({ where: { qrToken }, include: { branch: true } });
     if (!scanned || !scanned.isActive || !scanned.branch.isActive) throw new NotFoundException('Mã QR không hợp lệ');
     const customerId = user?.roleCode === 'CUSTOMER' ? user.id : undefined;
+    const now = new Date();
+    // Khách quét QR tại bàn đã đặt trong cửa sổ check-in: gắn phiên QR với đặt chỗ,
+    // để khi hóa đơn được thanh toán, đặt chỗ cũng hoàn tất và biến khỏi sơ đồ bàn.
+    const reservation = await this.prisma.reservation.findFirst({
+      where: {
+        branchId: scanned.branchId,
+        tableId: scanned.id,
+        status: 'CONFIRMED',
+        startAt: { lte: addMinutes(now, 120) },
+        endAt: { gt: now },
+      },
+      orderBy: { startAt: 'asc' },
+    });
     // US-9 AC1: quét QR chỉ mở phiên; bàn chuyển Đang có khách khi đơn đầu tiên tới
-    const { session, table } = await this.openForTable(scanned.id, { customerId, occupy: false });
+    const { session, table } = await this.openForTable(scanned.id, {
+      customerId,
+      reservationId: reservation?.id,
+      guestCount: reservation?.partySize,
+      occupy: false,
+    });
     return {
       sessionToken: session.token,
       sessionId: session.id,
@@ -351,16 +378,16 @@ export class TableSessionsService {
     return { from: await this.detail({ id: sessionId }), to: await this.detail({ id: target.id }) };
   }
 
-  /** Đóng phiên sau khi thanh toán xong: bàn -> Đang dọn (FR-WAT-11), đặt bàn -> hoàn tất */
+  /** Đóng phiên sau khi thanh toán xong: bàn được trả về Trống ngay, đặt bàn -> hoàn tất */
   async close(sessionId: number) {
     const session = await this.prisma.tableSession.findUnique({ where: { id: sessionId } });
     if (!session || session.status === 'CLOSED') return;
     await this.prisma.$transaction([
       this.prisma.tableSession.update({ where: { id: sessionId }, data: { status: 'CLOSED', closedAt: new Date() } }),
-      this.prisma.diningTable.update({ where: { id: session.tableId }, data: { status: 'CLEANING' } }),
+      this.prisma.diningTable.update({ where: { id: session.tableId }, data: { status: 'AVAILABLE' } }),
       this.prisma.diningTable.updateMany({
         where: { mergedIntoId: session.tableId },
-        data: { mergedIntoId: null, status: 'CLEANING' },
+        data: { mergedIntoId: null, status: 'AVAILABLE' },
       }),
       this.prisma.cartItem.deleteMany({ where: { sessionId } }),
       ...(session.reservationId

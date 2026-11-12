@@ -49,7 +49,8 @@ export class AuthService {
     private readonly config: ConfigService,
   ) {
     this.accessTtl = Number(config.get('JWT_ACCESS_TTL_SECONDS') ?? 900);
-    this.refreshTtlDays = Number(config.get('REFRESH_TOKEN_TTL_DAYS') ?? 30);
+    // Keep a signed-in session alive for a year after the user's latest activity.
+    this.refreshTtlDays = Number(config.get('REFRESH_TOKEN_TTL_DAYS') ?? 365);
   }
 
   async register(dto: RegisterDto, meta: RequestMeta) {
@@ -155,6 +156,8 @@ export class AuthService {
       data: {
         refreshTokenHash: this.crypto.sha256(newSecret),
         lastUsedAt: new Date(),
+        // Sliding expiration: activity renews the session lifetime.
+        expiresAt: addDays(new Date(), this.refreshTtlDays),
         ipAddress: meta.ip,
         userAgent: meta.userAgent,
       },

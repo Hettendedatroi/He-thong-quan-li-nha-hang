@@ -78,6 +78,22 @@
   dateField?.addEventListener("change", refreshOccupancy);
   $('[name="time"]')?.addEventListener("change", refreshOccupancy);
   refreshOccupancy();
+  const connectAvailability = () => {
+    if (!window.io) return;
+    const socket = window.io(api.replace(/\/api$/, ""));
+    const subscribe = () => socket.emit("subscribe.reservation-availability", { branchId: 1 });
+    socket.on("connect", subscribe);
+    socket.on("reservation.availability-updated", (event) => {
+      if (Number(event?.branchId) === 1) refreshOccupancy();
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") refreshOccupancy();
+    });
+  };
+  const socketScript = document.createElement("script");
+  socketScript.src = `${api.replace(/\/api$/, "")}/socket.io/socket.io.js`;
+  socketScript.onload = connectAvailability;
+  document.head.appendChild(socketScript);
   let guests = 2;
   $$("[data-step]").forEach((button) =>
     button.addEventListener("click", () => {
@@ -174,7 +190,27 @@
         help.textContent = `Bàn ${table.dataset.table} ${labels[state]}. Bấm lại để cập nhật`;
     }),
   );
-  $("[data-theme-toggle]")?.addEventListener("click", () =>
-    document.body.classList.toggle("soft-contrast"),
-  );
+  const themeToggle = $("[data-theme-toggle]");
+  const themeKey = "bep-nha-theme";
+  let darkTheme = false;
+  try {
+    darkTheme = localStorage.getItem(themeKey) === "dark";
+  } catch {}
+  const setTheme = (dark) => {
+    darkTheme = dark;
+    document.body.classList.toggle("theme-dark", dark);
+    document.documentElement.dataset.theme = dark ? "dark" : "light";
+    if (themeToggle) {
+      themeToggle.textContent = dark ? "☼" : "☾";
+      themeToggle.setAttribute("aria-label", dark ? "Bật giao diện sáng" : "Bật giao diện tối");
+      themeToggle.title = dark ? "Bật giao diện sáng" : "Bật giao diện tối";
+    }
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#171b19" : "#ffffff");
+  };
+  setTheme(darkTheme);
+  themeToggle?.addEventListener("click", () => {
+    const next = !darkTheme;
+    setTheme(next);
+    try { localStorage.setItem(themeKey, next ? "dark" : "light"); } catch {}
+  });
 })();

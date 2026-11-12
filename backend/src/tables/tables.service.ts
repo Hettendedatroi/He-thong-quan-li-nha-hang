@@ -11,8 +11,8 @@ import { MergeTablesDto } from './dto/tables.dto';
 import { TableSessionsService } from './table-sessions.service';
 
 /**
- * Trạng thái bàn được phép đổi thủ công. US-9 AC1, DoD A-05: Đang dọn dẹp -> Trống.
- * OCCUPIED chỉ đổi qua đơn đầu tiên / check-in (vào) và thanh toán (ra -> Đang dọn dẹp).
+ * Trạng thái bàn được phép đổi thủ công. Bàn đang dọn có thể được chuyển về Trống.
+ * OCCUPIED được đặt khi bàn nhận đơn đầu tiên; thanh toán sẽ đóng phiên và trả bàn về AVAILABLE.
  */
 const ALLOWED_TRANSITIONS: Record<TableStatus, TableStatus[]> = {
   AVAILABLE: ['RESERVED', 'CLEANING'],
@@ -78,8 +78,10 @@ export class TablesService {
         const next = nextReservation.get(t.id);
         let displayStatus: TableStatus = t.status;
         if (t.mergedIntoId) displayStatus = 'OCCUPIED';
-        // US-9 AC4: bàn sắp tới giờ đặt hiển thị Đã đặt kèm giờ & tên khách
-        else if (t.status === 'AVAILABLE' && next && next.startAt <= leadLimit) {
+        // Bàn có đặt chỗ đã xác nhận luôn hiện Đã đặt; đặt chỗ chờ duyệt
+        // chỉ giữ bàn khi đã tới cửa sổ gần giờ hẹn.
+        else if (t.status === 'AVAILABLE' && next &&
+          (next.status === 'CONFIRMED' || next.startAt <= leadLimit)) {
           displayStatus = 'RESERVED';
         }
         summary[displayStatus]++;

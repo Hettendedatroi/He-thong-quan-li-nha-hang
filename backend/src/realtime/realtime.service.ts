@@ -5,6 +5,7 @@ import type { Server } from 'socket.io';
 export const rooms = {
   branchStaff: (branchId: number) => `branch:${branchId}:staff`,
   kitchen: (branchId: number) => `branch:${branchId}:kitchen`,
+  availability: (branchId: number) => `branch:${branchId}:reservation-availability`,
   /** Nhân viên cấp chuỗi (không gắn chi nhánh) nhận sự kiện của mọi chi nhánh */
   allStaff: 'staff:all',
   session: (token: string) => `session:${token}`,
@@ -35,6 +36,10 @@ export class RealtimeService {
 
   toKitchen(branchId: number, event: string, payload: unknown) {
     this.emit(rooms.kitchen(branchId), event, payload);
+  }
+
+  toAvailability(branchId: number) {
+    this.emit(rooms.availability(branchId), 'reservation.availability-updated', { branchId });
   }
 
   toSession(token: string, event: string, payload: unknown) {
