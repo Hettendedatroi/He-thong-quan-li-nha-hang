@@ -1,0 +1,27 @@
+# Dependencies & build
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Môi trường - KHÔNG commit file .env thật
+.env
+.env.*
+!.env.example
+
+# File do người dùng tải lên & bản sao lưu
+uploads/*
+!uploads/.gitkeep
+backups/*
+!backups/.gitkeep
+
+# Log & OS
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/*
+!.vscode/extensions.json

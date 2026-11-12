@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#ffffff" />
+    <title>Bếp Nhà | Đặt bàn và gọi món</title>
+    <link rel="stylesheet" href="css/restaurant.css?v=20261110-1" />
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="/"
+        ><span class="brand-mark">BN</span
+        ><span><b>BẾP NHÀ</b><small>Quán ăn gia đình</small></span></a
+      >
+      <nav>
+        <a class="active" href="/">Đặt bàn</a
+        ><a href="/menu">Thực đơn</a
+        ><a href="/manage#dashboard">Quản lý</a>
+      </nav>
+      <button class="icon-button" data-theme-toggle aria-label="Đổi giao diện">
+        ☼
+      </button>
+    </header>
+    <main class="booking-page">
+      <section class="booking-hero">
+        <div>
+          <span class="eyebrow">Đặt bàn trực tuyến</span>
+          <h1>Một bữa ăn ngon<br /><em>bắt đầu từ một chỗ ngồi đẹp.</em></h1>
+          <p>
+            Chọn thời gian, số khách và món yêu thích. Bếp Nhà giữ bàn trong 15
+            phút sau giờ hẹn.
+          </p>
+          <div class="hero-meta">
+            <span>● Mở cửa 10:00 - 22:00</span><span>⌁ 36 Mỹ Đình, Q.1</span>
+          </div>
+        </div>
+        <div class="hero-plate">
+          <span class="plate-ring"></span><span class="plate-food">✦</span
+          ><small>Món mới mỗi tuần</small>
+        </div>
+      </section>
+      <section class="booking-layout">
+        <div class="booking-card panel">
+          <div class="section-heading">
+            <div>
+              <span class="eyebrow">01 / Thông tin đặt bàn</span>
+              <h2>Giữ chỗ của bạn</h2>
+            </div>
+            <span class="step-badge">1 / 2</span>
+          </div>
+          <form id="booking-form">
+            <div class="field-grid">
+              <label>Ngày đến<input type="date" name="date" required /></label
+              ><label
+                >Giờ đến<select name="time">
+                  <option>18:00</option>
+                  <option>18:30</option>
+                  <option>19:00</option>
+                  <option>19:30</option>
+                  <option>20:00</option>
+                </select></label
+              >
+            </div>
+            <label
+              >Số lượng khách
+              <div class="guest-stepper">
+                <button type="button" data-step="-1">−</button
+                ><strong id="guest-count">2 người</strong
+                ><button type="button" data-step="1">+</button>
+              </div></label
+            >
+            <div class="table-options">
+              <label class="table-option selected"
+                ><input
+                  type="radio"
+                  name="area"
+                  value="Trong nhà"
+                  checked
+                /><span class="option-icon">▦</span><b>Trong nhà</b
+                ><small>Ấm cúng, máy lạnh</small></label
+              ><label class="table-option"
+                ><input type="radio" name="area" value="Sân vườn" /><span
+                  class="option-icon"
+                  >❋</span
+                ><b>Sân vườn</b><small>Thoáng mát, nhiều cây</small></label
+              ><label class="table-option"
+                ><input type="radio" name="area" value="Phòng riêng" /><span
+                  class="option-icon"
+                  >◇</span
+                ><b>Phòng riêng</b><small>Từ 6 khách trở lên</small></label
+              >
+            </div>
+            <div class="field-grid">
+              <label
+                >Họ và tên<input
+                  name="name"
+                  placeholder="Ví dụ: Nguyễn Minh An"
+                  required /></label
+              ><label
+                >Số điện thoại<input
+                  name="phone"
+                  placeholder="09xx xxx xxx"
+                  required
+              /></label>
+            </div>
+            <label
+              >Ghi chú cho nhà hàng<textarea
+                name="note"
+                rows="3"
+                placeholder="Sinh nhật, ăn chay, đi cùng trẻ nhỏ..."
+              ></textarea>
+            </label>
+            <button class="button primary full" type="submit">
+              Xác nhận đặt bàn <span>→</span>
+            </button>
+          </form>
+        </div>
+        <aside class="booking-side">
+          <div class="mini-panel dark">
+            <span class="eyebrow">Đặt món trước</span>
+            <h3>Bạn muốn bữa ăn sẵn sàng khi tới?</h3>
+            <p>Chọn món từ thực đơn và thêm vào ghi chú đặt bàn.</p>
+            <a class="button light" href="/menu"
+              >Xem thực đơn <span>→</span></a
+            >
+          </div>
+          <div class="mini-panel">
+            <span class="eyebrow">Tình trạng bàn theo giờ bạn chọn</span>
+            <div class="stat-line"><b id="booking-occupancy-percent">—%</b><span>bàn đã được đặt</span></div>
+            <div class="progress"><i id="booking-occupancy-bar" style="width: 0%"></i></div>
+            <p class="muted" id="booking-occupancy-caption">Đang cập nhật số bàn trống…</p>
+          </div>
+        </aside>
+      </section>
+    </main>
+    <dialog class="booking-confirmation" id="booking-result" aria-labelledby="booking-result-title">
+      <div class="booking-confirmation-card">
+        <button class="booking-result-close" type="button" data-close-booking aria-label="Đóng">×</button>
+        <span class="eyebrow">Đặt bàn thành công</span>
+        <h2 id="booking-result-title">Thông tin bàn của bạn</h2>
+        <p class="booking-result-intro" id="booking-result-intro">Nhà hàng đã tự động chọn bàn còn trống phù hợp với số khách.</p>
+        <div class="booking-result-table"><small>BÀN ĐƯỢC CHỌN</small><strong id="booking-result-table">—</strong><span id="booking-result-zone"></span></div>
+        <dl class="booking-result-details">
+          <div><dt>Mã đặt bàn</dt><dd id="booking-result-code">—</dd></div>
+          <div><dt>Khách</dt><dd id="booking-result-guest">—</dd></div>
+          <div><dt>Thời gian</dt><dd id="booking-result-time">—</dd></div>
+          <div><dt>Số khách</dt><dd id="booking-result-count">—</dd></div>
+          <div><dt>Trạng thái</dt><dd id="booking-result-status">—</dd></div>
+        </dl>
+        <img class="booking-result-qr" id="booking-result-qr" alt="Mã QR thông tin đặt bàn" hidden />
+        <p class="booking-result-footnote">Hãy lưu mã đặt bàn hoặc chụp màn hình để xuất trình khi đến nhà hàng.</p>
+        <button class="button primary full" type="button" data-close-booking>Đã hiểu</button>
+      </div>
+    </dialog>
+    <div class="toast" id="toast"></div>
+    <script src="js/restaurant.js?v=20261110-1"></script>
+  </body>
+</html>
