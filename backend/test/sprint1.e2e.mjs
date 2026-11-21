@@ -236,7 +236,7 @@ async function main() {
   const me = (await call('GET', '/auth/me', { token: manager })).data;
   expectRejected('US-18 AC4', 'Quản lý không tự khóa mình', await call('POST', `/admin/users/${me.id}/lock`, { token: manager, body: {} }));
   expectRejected('US-18 AC4', 'Quản lý không tự đổi vai trò', await call('PATCH', `/admin/users/${me.id}`, { token: manager, body: { roleCode: 'WAITER' } }));
-  expectStatus('US-18 AC4', 'Không có API xóa tài khoản (chỉ khóa)', await call('DELETE', `/admin/users/${me.id}`, { token: manager }), 404);
+  expectRejected('US-18 AC4', 'Quản lý không tự xóa tài khoản', await call('DELETE', `/admin/users/${me.id}`, { token: manager }), 400);
   expectRejected('US-18', 'Phục vụ không tạo tài khoản được', await call('POST', '/admin/users', { token: waiter, body: staff }), 403);
   await call('POST', `/admin/users/${uid}/lock`, { token: manager, body: { reason: 'Dọn dữ liệu test' } });
 
