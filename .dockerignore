@@ -1,0 +1,11 @@
+.git
+.idea
+backend
+node_modules
+coverage
+dist
+*.log
+README.md
+package.json
+package-lock.json
+.env
