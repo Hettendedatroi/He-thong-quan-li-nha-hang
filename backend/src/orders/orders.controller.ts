@@ -92,6 +92,12 @@ export class OrdersController {
     return this.orders.list(user, q);
   }
 
+  @Delete(':id')
+  @RequirePermissions(PERMISSIONS.ORDER_MANAGE)
+  archive(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number) {
+    return this.orders.archive(user, id);
+  }
+
   /** FR-WAT-06, US-10: gọi món hộ khách (truyền tableId hoặc sessionId) */
   @Post()
   @RequirePermissions(PERMISSIONS.ORDER_CREATE)

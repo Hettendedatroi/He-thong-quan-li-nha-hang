@@ -18,6 +18,7 @@ import { CHANGEABLE_STATUSES, refreshOrderStatus } from './order-status.util';
 
 export const ORDER_INCLUDE = {
   table: { select: { id: true, code: true } },
+  session: { select: { status: true } },
   items: { orderBy: { id: 'asc' } },
   createdBy: { select: { id: true, fullName: true } },
 } satisfies Prisma.OrderInclude;
@@ -206,7 +207,7 @@ export class OrdersService {
 
   listForSession(token: string) {
     return this.sessions.getByToken(token, false).then((s) =>
-      this.prisma.order.findMany({ where: { sessionId: s.id }, include: ORDER_INCLUDE, orderBy: { createdAt: 'asc' } }),
+      this.prisma.order.findMany({ where: { sessionId: s.id, archivedAt: null }, include: ORDER_INCLUDE, orderBy: { createdAt: 'desc' } }),
     );
   }
 
@@ -214,6 +215,7 @@ export class OrdersService {
     const branchId = scopeBranch(user, q.branchId);
     const range = q.from || q.to ? parseDateRange(q.from, q.to) : null;
     const where: Prisma.OrderWhereInput = {
+      archivedAt: null,
       ...(branchId ? { branchId } : {}),
       ...(q.status ? { status: q.status } : {}),
       ...(q.sessionId ? { sessionId: q.sessionId } : {}),
@@ -224,6 +226,18 @@ export class OrdersService {
       this.prisma.order.count({ where }),
     ]);
     return paged(items, total, q.page, q.limit);
+  }
+
+  async archive(user: AuthUser, id: number) {
+    const order = await this.get(user, id);
+    if (order.archivedAt) throw new NotFoundException('Đơn hàng không còn trong danh sách');
+    if (order.status !== 'COMPLETED' || order.session.status !== 'CLOSED') {
+      throw new BadRequestException('Chỉ có thể xóa khỏi danh sách đơn đã hoàn tất và đóng bàn');
+    }
+    const archivedAt = new Date();
+    await this.prisma.order.update({ where: { id }, data: { archivedAt } });
+    await this.audit.log({ userId: user.id, action: 'order.archive', entity: 'Order', entityId: id });
+    return { ok: true, archivedAt };
   }
 
   async get(user: AuthUser, id: number) {

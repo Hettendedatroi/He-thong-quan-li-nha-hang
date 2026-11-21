@@ -227,6 +227,7 @@ model User {
   promoOptIn    Boolean      @default(true)
   language      String       @default("vi")
   lastLoginAt   DateTime?
+  archivedAt    DateTime?
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
 
@@ -383,6 +384,7 @@ model Reservation {
   checkedInAt     DateTime?
   cancelledAt     DateTime?
   reminderSentAt  DateTime?
+  archivedAt      DateTime?
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
 
@@ -458,6 +460,7 @@ model Order {
   priority    Int         @default(0)
   note        String?
   sentAt      DateTime?
+  archivedAt DateTime?
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
 

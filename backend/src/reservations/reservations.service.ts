@@ -355,6 +355,7 @@ export class ReservationsService {
     if (q.date) range = parseDateRange(q.date, q.date);
     else if (q.from || q.to) range = parseDateRange(q.from, q.to);
     const where: Prisma.ReservationWhereInput = {
+      archivedAt: null,
       ...(branchId ? { branchId } : {}),
       ...(q.status ? { status: q.status } : {}),
       ...(range ? { startAt: { gte: range.from, lt: range.to } } : {}),
@@ -372,12 +373,25 @@ export class ReservationsService {
       this.prisma.reservation.findMany({
         where,
         include: INCLUDE_FULL,
-        orderBy: { startAt: 'asc' },
+        orderBy: [{ startAt: 'desc' }, { createdAt: 'desc' }],
         ...toSkipTake(q.page, q.limit),
       }),
       this.prisma.reservation.count({ where }),
     ]);
     return paged(items.map((r) => this.present(r)), total, q.page, q.limit);
+  }
+
+  async archive(user: AuthUser, id: number) {
+    const reservation = await this.findById(id);
+    assertBranchAccess(user, reservation.branchId);
+    if (reservation.archivedAt) throw new NotFoundException('Lịch đặt bàn không còn trong danh sách');
+    if (reservation.startAt >= new Date() || !['REJECTED', 'CANCELLED', 'COMPLETED', 'NO_SHOW'].includes(reservation.status)) {
+      throw new BadRequestException('Chỉ có thể xóa khỏi danh sách lịch đặt đã kết thúc');
+    }
+    const archived = await this.prisma.reservation.update({ where: { id }, data: { archivedAt: new Date() } });
+    await this.audit.log({ userId: user.id, action: 'reservation.archive', entity: 'Reservation', entityId: id });
+    this.realtime.broadcast('reservation.updated', { id, archivedAt: archived.archivedAt });
+    return { ok: true, archivedAt: archived.archivedAt };
   }
 
   async get(user: AuthUser, id: number) {
@@ -731,13 +745,13 @@ export class ReservationsService {
 
   private async findByCode(code: string): Promise<FullReservation> {
     const r = await this.prisma.reservation.findUnique({ where: { code }, include: INCLUDE_FULL });
-    if (!r) throw new NotFoundException('Không tìm thấy đặt bàn');
+    if (!r || r.archivedAt) throw new NotFoundException('Không tìm thấy đặt bàn');
     return r;
   }
 
   private async findById(id: number): Promise<FullReservation> {
     const r = await this.prisma.reservation.findUnique({ where: { id }, include: INCLUDE_FULL });
-    if (!r) throw new NotFoundException('Không tìm thấy đặt bàn');
+    if (!r || r.archivedAt) throw new NotFoundException('Không tìm thấy đặt bàn');
     return r;
   }
 

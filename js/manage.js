@@ -6,6 +6,11 @@
     $$ = (s, p = document) => [...p.querySelectorAll(s)],
     app = $("#app"),
     dlg = $("#login");
+  const lockScreen = () => document.body.classList.add("login-required");
+  const unlockScreen = () => {
+    document.body.classList.remove("login-required");
+    document.documentElement.classList.remove("auth-pending");
+  };
   let token = localStorage.getItem("bn_access"),
     me = null,
     refreshInFlight = null,
@@ -24,6 +29,7 @@
     WAITER: "Phục vụ",
     KITCHEN: "Nhân viên bếp",
   };
+  const isWaiter = () => (me?.role?.code || me?.roleCode) === "WAITER";
   const roleHome = {
     ADMIN: "dashboard",
     MANAGER: "dashboard",
@@ -98,7 +104,7 @@
       realtimeSocket.on("reservation.created", refreshReservations);
       realtimeSocket.on("reservation.updated", refreshReservations);
       const refreshOrders = () => {
-        if (!["#kitchen", "#orders"].includes(location.hash)) return;
+        if (!["#kitchen", "#orders", "#table-map"].includes(location.hash)) return;
         clearTimeout(realtimeRefreshTimer);
         realtimeRefreshTimer = setTimeout(() => {
           responseCache.clear();
@@ -106,8 +112,17 @@
         }, 100);
       };
       ["kitchen.order-received", "order.created", "order-item.updated"].forEach((event) =>
-        realtimeSocket.on(event, refreshOrders),
+        realtimeSocket.on(event, (data) => {
+          const ready = event === "order-item.updated" && data?.status === "READY";
+          if (isWaiter() && (event === "order.created" || event === "kitchen.order-received" || ready))
+            toast(ready ? `Món đã sẵn sàng · Bàn ${data?.tableCode || data?.table?.code || ""}` : `Có đơn mới · Bàn ${data?.table?.code || ""}`);
+          refreshOrders();
+        }),
       );
+      realtimeSocket.on("service-request.created", (data) => {
+        if (isWaiter()) toast(`Yêu cầu phục vụ · Bàn ${data?.table?.code || data?.session?.table?.code || ""}`);
+        refreshOrders();
+      });
       realtimeSocket.on("connect", refreshOrders);
       realtimeSocket.on("bill.updated", () => {
         if (location.hash === "#payments") {
@@ -176,7 +191,7 @@
     const request = {
       ...options,
       headers: {
-        ...(options.body ? { "Content-Type": "application/json" } : {}),
+        ...(options.body && !(options.body instanceof FormData) ? { "Content-Type": "application/json" } : {}),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...options.headers,
       },
@@ -221,6 +236,8 @@
       throw Error(
         res.status >= 502
           ? "Máy chủ đang khởi động hoặc tạm thời quá tải. Vui lòng bấm Làm mới sau ít giây."
+          : res.status === 413
+            ? "Ảnh tải lên vượt quá giới hạn máy chủ. Hãy chọn ảnh nhỏ hơn 5 MB."
           : res.status === 403
             ? "Truy cập bị từ chối"
             : body?.message || `Yêu cầu API thất bại (${res.status})`,
@@ -246,12 +263,12 @@
       return;
     }
     const role = me?.role?.code || me?.roleCode;
+    const requestedPage =
+      location.hash.slice(1) || roleHome[role] || "dashboard";
     const allowedPages = Object.entries(pagePermissions)
-      .filter(([page, permissions]) => canAny(permissions) && (page !== "payments" || canAny(["table.view", "order.view"])))
+      .filter(([page, permissions]) => canAny(permissions) && (page !== "table-map" || isWaiter()) && (page !== "payments" || canAny(["table.view", "order.view"])))
       .map(([page]) => page);
     if (role === "ADMIN" || role === "MANAGER") allowedPages.unshift("dashboard");
-    const requestedPage =
-      location.hash.slice(1) || roleHome[role] || allowedPages[0] || "dashboard";
     const page = allowedPages.includes(requestedPage)
       ? requestedPage
       : "forbidden";
@@ -311,15 +328,7 @@
     };
     const permissions = me?.role?.permissions || [];
     const canConfigure = permissions.includes("*") || permissions.includes("table.configure");
-    const cards = tables.map((item) => {
-      const displayStatus = item.displayStatus || item.status;
-      const r = item.upcomingReservation;
-      const card = '<article class="card"><strong>' + esc(item.code || item.name || "Bàn") + '</strong><span class="badge">' + esc(labels[displayStatus] || displayStatus || "Chưa rõ") + '</span><small>' + esc(item.zoneName || item.zone?.name || "") + ' · ' + esc(item.capacity || 0) + ' chỗ</small>' +
-        (r ? '<div class="reservation-on-table"><b>Khách đã đặt</b><span>' + esc(r.customerName) + '</span><span>' + esc(r.customerPhone) + '</span><span>' + esc(r.partySize) + ' khách · ' + esc(new Date(r.startAt).toLocaleString("vi-VN", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })) + '</span><small>Mã ' + esc(r.code) + ' · ' + (r.status === "PENDING" ? "Chờ xác nhận" : "Đã xác nhận") + '</small></div>' : "") +
-        '<div class="table-card-actions">' + (canConfigure ? `<button class="quiet" data-table-edit="${item.id}" data-zone-id="${item.zoneId || item.zone?.id || ""}" data-code="${esc(item.code || "")}" data-capacity="${Number(item.capacity || 2)}">Sửa bàn</button><button class="quiet" data-table-qr="${item.id}">Mã QR</button>` : "") + '</div></article>';
-      return card;
-    }).join("");
-    app.innerHTML = '<div class="account-toolbar"><div><h2>Sơ đồ bàn</h2><p class="muted">Theo dõi bàn và thông tin khách đặt.</p></div><div class="table-map-actions">' + (canConfigure ? '<button class="primary" data-table-new>＋ Thêm bàn</button>' : '') + '<button class="quiet" data-reload>Làm mới</button></div></div><div class="grid">' + (cards || '<div class="panel empty">Chưa có dữ liệu bàn.</div>') + '</div>';
+    app.innerHTML = '<div class="account-toolbar"><div><h2>Sơ đồ bàn</h2><p class="muted">Theo dõi bàn và thông tin khách đặt theo khu vực.</p></div><div class="table-map-actions">' + (canConfigure ? '<button class="primary" data-table-new>＋ Thêm bàn</button>' : '') + '<button class="quiet" data-reload>Làm mới</button></div></div>' + (zones.map(z => { const zoneTables = tables.filter(t => t.zoneName === z.name); return zoneTables.length ? `<section><h2>${esc(z.name)}</h2><div class="grid">${zoneTables.map(item => { const displayStatus = item.displayStatus || item.status, r = item.upcomingReservation, session = item.session; return '<article class="card"><strong>' + esc(item.code || item.name || 'Bàn') + '</strong><span class="badge">' + esc(labels[displayStatus] || displayStatus || 'Chưa rõ') + '</span><small>' + esc(item.capacity || 0) + ' chỗ</small>' + (session ? `<small>${session.guestCount || 0} khách · ${session.pendingItems || 0} món chờ · ${session.readyItems || 0} món sẵn sàng · ${(session.openRequests || []).length} yêu cầu</small>` : '') + (r ? '<div class="reservation-on-table"><b>Khách đã đặt</b><span>' + esc(r.customerName) + '</span><span>' + esc(r.customerPhone) + '</span><span>' + esc(r.partySize) + ' khách · ' + esc(new Date(r.startAt).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })) + '</span><small>Mã ' + esc(r.code) + ' · ' + (r.status === 'PENDING' ? 'Chờ xác nhận' : 'Đã xác nhận') + '</small></div>' : '') + '<div class="table-card-actions">' + (canConfigure ? `<button class="quiet" data-table-edit="${item.id}" data-zone-id="${item.zoneId || item.zone?.id || ''}" data-code="${esc(item.code || '')}" data-capacity="${Number(item.capacity || 2)}">Sửa bàn</button><button class="quiet" data-table-delete="${item.id}" data-table-code="${esc(item.code || item.name || '')}">Xóa bàn</button>` : '') + `<button class="quiet" data-table-qr="${item.id}">Mã QR</button></div></article>`; }).join('')}</div></section>` : ''; }).join('') || '<div class="panel empty">Chưa có dữ liệu bàn.</div>');
   }
 
   async function openTableForm(table) {
@@ -371,7 +380,7 @@
     const rows = list
       .map(
         (x) =>
-          `<tr><td><b>${esc(x.code)}</b></td><td>${esc(x.customerName)}<br><small>${esc(x.customerPhone)}</small></td><td>${esc(x.startAt && new Date(x.startAt).toLocaleString("vi-VN"))}<br>${x.partySize || 0} khách · ${esc(x.branch?.name || "")}</td><td><span class="badge status-${esc(String(x.status).toLowerCase())}">${esc(statusName(x.status))}</span></td><td class="user-actions">${can("reservation.manage") && x.status === "PENDING" ? act("Xác nhận", `/reservations/${x.id}/confirm`) : ""}${can("reservation.manage") && ["CONFIRMED", "CHECKED_IN"].includes(x.status) ? `<button class="action alt" data-reservation-complete="${x.id}">Ăn xong</button>` : ""}${can("reservation.manage") && ["PENDING", "CONFIRMED"].includes(x.status) ? `<button class="action alt" data-reservation-reject="${x.id}">Từ chối</button>` : ""}</td></tr>`,
+          `<tr><td><b>${esc(x.code)}</b></td><td>${esc(x.customerName)}<br><small>${esc(x.customerPhone)}</small></td><td>${esc(x.startAt && new Date(x.startAt).toLocaleString("vi-VN"))}<br>${x.partySize || 0} khách · ${esc(x.branch?.name || "")}</td><td><span class="badge status-${esc(String(x.status).toLowerCase())}">${esc(statusName(x.status))}</span></td><td class="user-actions">${can("reservation.manage") && x.status === "PENDING" ? act("Xác nhận", `/reservations/${x.id}/confirm`) : ""}${can("reservation.manage") && ["CONFIRMED", "CHECKED_IN"].includes(x.status) ? `<button class="action alt" data-reservation-complete="${x.id}">Ăn xong</button>` : ""}${can("reservation.manage") && ["PENDING", "CONFIRMED"].includes(x.status) ? `<button class="action alt" data-reservation-reject="${x.id}">Từ chối</button>` : ""}${can("reservation.manage") && new Date(x.startAt) < new Date() && ["REJECTED", "CANCELLED", "COMPLETED", "NO_SHOW"].includes(x.status) ? `<button class="action danger" data-reservation-delete="${x.id}">Xóa</button>` : ""}</td></tr>`,
       )
       .join("");
     app.innerHTML = `<div class="account-toolbar"><div><h2>Quản lý đặt bàn</h2><p class="muted">${data.total ?? list.length} lượt đặt · Lịch hoàn tất và bị từ chối có thể xem trong bộ lọc.</p></div><button class="quiet" data-reload>Làm mới</button></div><div class="account-filters"><input id="reservation-search" type="search" placeholder="Tìm mã đặt bàn, tên hoặc số điện thoại"><select id="reservation-status"><option value="ACTIVE">Lịch đang hoạt động</option><option value="">Mọi trạng thái</option>${["PENDING", "CONFIRMED", "CHECKED_IN", "COMPLETED", "CANCELLED", "REJECTED", "NO_SHOW"].map((s) => `<option value="${s}">${statusName(s)}</option>`).join("")}</select><input id="reservation-date" type="date" aria-label="Lọc theo ngày"></div>${table(["Mã đặt", "Khách", "Thời gian", "Trạng thái", "Thao tác"], rows)}`;
@@ -404,11 +413,11 @@
     const rows = list
       .map(
         (x) =>
-          `<tr><td><b>${esc(x.code || `#${x.id}`)}</b><br><small>${esc(new Date(x.createdAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }))}</small></td><td>${esc(x.table?.code || x.session?.table?.code || "—")}</td><td>${(x.items || []).map((i) => `${esc(i.quantity)} × ${esc(i.name || i.menuItem?.name || i.combo?.name || "Món")}`).join("<br>") || "—"}</td><td><span class="badge">${esc(statusName(x.status))}</span><br><small>Ưu tiên ${x.priority || 0}</small></td><td class="user-actions">${can("order.manage") && x.status === "PENDING_CONFIRM" ? act("Gửi bếp", `/orders/${x.id}/send-to-kitchen`) : ""}${can("order.manage") && x.status === "SENT_TO_KITCHEN" ? `<button class="action alt" data-priority="${x.id}" data-level="${(Number(x.priority || 0) + 1) % 3}">Ưu tiên ${(Number(x.priority || 0) + 1) % 3}</button>` : ""}${(
+          `<tr><td><b>${esc(x.code || `#${x.id}`)}</b><br><small>${esc(new Date(x.createdAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }))}</small></td><td>${esc(x.table?.code || x.session?.table?.code || "—")}</td><td>${(x.items || []).map((i) => `${esc(i.quantity)} × ${esc(i.name || i.menuItem?.name || i.combo?.name || "Món")}`).join("<br>") || "—"}</td><td><span class="badge">${esc(statusName(x.status))}</span><br><small>Ưu tiên ${x.priority || 0}</small></td><td class="user-actions">${can("order.manage") && x.status === "PENDING_CONFIRM" ? act("Gửi bếp", `/orders/${x.id}/send-to-kitchen`) : ""}${can("order.manage") && x.status === "SENT_TO_KITCHEN" ? `<button class="action alt" data-priority="${x.id}" data-level="${(Number(x.priority || 0) + 1) % 3}">Ưu tiên ${(Number(x.priority || 0) + 1) % 3}</button>` : ""}${can("order.manage") && x.status === "COMPLETED" && x.session?.status === "CLOSED" ? `<button class="action danger" data-order-delete="${x.id}">Xóa</button>` : ""}${(
             x.items || []
           )
             .filter((i) => i.status === "READY")
-            .map((i) => act(`Đã giao: ${i.name}`, `/order-items/${i.id}/serve`))
+            .map((i) => isWaiter() ? act(`Đã phục vụ: ${i.name}`, `/order-items/${i.id}/serve`) : "")
             .join("")}</td></tr>`,
       )
       .join("");
@@ -537,10 +546,10 @@
     const rows = list
       .map(
         (x) =>
-          `<tr><td><b>${esc(x.name)}</b><br><small>${esc(x.description || "")}</small></td><td>${esc(x.category?.name || categoryRows.find((c) => c.id === x.categoryId)?.name || "—")}</td><td>${money(x.price)}</td><td><span class="badge">${x.isAvailable ? "Còn món" : "Tạm hết"} · ${x.isVisible ? "Đang hiện" : "Đang ẩn"}</span></td><td class="user-actions">${can("menu.manage") ? `<button class="action alt" data-menu-edit="${x.id}">Sửa</button>` : ""}${can("menu.stock") ? act(x.isAvailable ? "Tạm hết" : "Còn món", `/menu/items/${x.id}/availability`, "PATCH", { isAvailable: !x.isAvailable }) : ""}${can("menu.manage") ? `${act(x.isVisible ? "Ẩn món" : "Hiện món", `/menu/items/${x.id}/visibility`, "PATCH", { isVisible: !x.isVisible })}<button class="action alt" data-menu-delete="${x.id}">Xóa</button>` : ""}</td></tr>`,
+          `<tr><td>${x.imageUrl ? `<img class="menu-thumb" src="${esc(x.imageUrl)}" alt="${esc(x.name)}">` : ""}<b>${esc(x.name)}</b><br><small>${esc(x.description || "")}</small></td><td>${esc(x.category?.name || categoryRows.find((c) => c.id === x.categoryId)?.name || "—")}</td><td>${money(x.price)}</td><td><span class="badge">${x.isAvailable ? "Còn món" : "Tạm hết"} · ${x.isVisible ? "Đang hiện" : "Đang ẩn"}</span></td><td class="user-actions">${can("menu.manage") ? `<button class="action alt" data-menu-edit="${x.id}">Sửa</button>` : ""}${can("menu.stock") ? act(x.isAvailable ? "Tạm hết" : "Còn món", `/menu/items/${x.id}/availability`, "PATCH", { isAvailable: !x.isAvailable }) : ""}${can("menu.manage") ? `${act(x.isVisible ? "Ẩn món" : "Hiện món", `/menu/items/${x.id}/visibility`, "PATCH", { isVisible: !x.isVisible })}<button class="action alt" data-menu-delete="${x.id}">Xóa</button>` : ""}</td></tr>`,
       )
       .join("");
-    app.innerHTML = `<div class="account-toolbar"><div><h2>Thực đơn</h2><p class="muted">${menuRows.length} món · Tìm kiếm và lọc tại chỗ, chỉ gọi API khi cập nhật.</p></div>${can("menu.manage") ? '<button class="primary" data-menu-new>＋ Thêm món</button>' : ""}</div><div class="account-filters"><input id="menu-search" type="search" placeholder="Tìm món ăn"><select id="menu-category"><option value="">Tất cả danh mục</option>${categoryRows.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join("")}</select><select id="menu-availability"><option value="">Tất cả tình trạng</option><option value="true">Còn món</option><option value="false">Tạm hết</option></select></div>${table(["Món ăn", "Danh mục", "Giá bán", "Tình trạng", "Thao tác"], rows)}`;
+    app.innerHTML = `<div class="account-toolbar"><div><h2>Thực đơn</h2><p class="muted">${menuRows.length} món · Tìm kiếm và lọc tại chỗ.</p></div>${can("menu.manage") ? '<button class="primary" data-category-new>＋ Danh mục</button><button class="primary" data-menu-new>＋ Thêm món</button>' : ""}</div>${can("menu.manage") ? `<div class="category-admin">${categoryRows.map(c => `<span class="category-chip">${esc(c.name)} · ${c.isActive ? "Đang hiện" : "Đang ẩn"}<button data-category-edit="${c.id}" aria-label="Sửa ${esc(c.name)}">Sửa</button><button data-category-visibility="${c.id}" data-active="${c.isActive}" aria-label="${c.isActive ? "Ẩn" : "Hiện"} ${esc(c.name)}">${c.isActive ? "Ẩn" : "Hiện"}</button><button data-category-delete="${c.id}">Xóa</button></span>`).join("")}</div>` : ""}<div class="account-filters"><input id="menu-search" type="search" placeholder="Tìm món ăn"><select id="menu-category"><option value="">Tất cả danh mục</option>${categoryRows.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join("")}</select><select id="menu-availability"><option value="">Tất cả tình trạng</option><option value="true">Còn món</option><option value="false">Tạm hết</option></select></div>${table(["Món ăn", "Danh mục", "Giá bán", "Tình trạng", "Thao tác"], rows)}`;
     $("#menu-search").oninput = renderMenu;
     $("#menu-category").onchange = renderMenu;
     $("#menu-availability").onchange = renderMenu;
@@ -576,13 +585,17 @@
           `<tr><td><b>${esc(u.fullName)}</b><br><small>@${esc(u.username || "—")}</small></td><td>${esc(u.email || "—")}<br>${esc(u.phone || "")}</td><td>${esc(u.role?.name || u.role?.code || "—")}</td><td>${esc(u.branch?.name || "Chưa gán")}</td><td><span class="badge ${u.status === "LOCKED" ? "locked" : ""}">${u.status === "LOCKED" ? "Đã khóa" : "Đang hoạt động"}</span></td><td class="user-actions"><button class="action alt" data-user-action="edit" data-id="${u.id}">Sửa</button><button class="action alt" data-user-action="password" data-id="${u.id}">Mật khẩu</button><button class="action ${u.status === "LOCKED" ? "alt" : ""}" data-user-action="${u.status === "LOCKED" ? "unlock" : "lock"}" data-id="${u.id}">${u.status === "LOCKED" ? "Mở khóa" : "Khóa"}</button></td></tr>`,
       )
       .join("");
-    app.innerHTML = `<div class="account-toolbar"><div><h2>Tài khoản nhân viên</h2><p class="muted">${userRows.length} tài khoản · Tìm kiếm ngay trên danh sách, không gọi API thêm.</p></div><button class="primary" data-user-action="create">＋ Tạo tài khoản</button></div><div class="account-filters"><input id="user-search" type="search" placeholder="Tìm tên, username, email, số điện thoại…" aria-label="Tìm tài khoản"><select id="role-filter"><option value="">Tất cả vai trò</option>${Object.entries(
+    app.innerHTML = `<div class="account-toolbar"><div><h2>Tài khoản nhân viên</h2><p class="muted">${userRows.length} tài khoản · Tìm kiếm ngay trên danh sách.</p></div><button class="primary" data-user-action="create">＋ Tạo tài khoản</button></div><div class="account-filters"><input id="user-search" type="search" placeholder="Tìm tên, username, email, số điện thoại…" aria-label="Tìm tài khoản"><select id="role-filter"><option value="">Tất cả vai trò</option>${Object.entries(
       roleNames,
     )
       .map(([code, name]) => `<option value="${code}">${name}</option>`)
       .join(
         "",
       )}</select><select id="status-filter"><option value="">Mọi trạng thái</option><option value="ACTIVE">Đang hoạt động</option><option value="LOCKED">Đã khóa</option></select></div>${table(["Nhân viên", "Liên hệ", "Vai trò", "Chi nhánh", "Trạng thái", "Thao tác"], rows)}`;
+    userRows.filter((u) => u.status === "LOCKED").forEach((u) => {
+      const edit = app.querySelector(`[data-user-action="edit"][data-id="${u.id}"]`);
+      edit?.parentElement.insertAdjacentHTML("beforeend", `<button class="action danger" data-user-action="archive" data-id="${u.id}">Xóa</button>`);
+    });
     $("#user-search").value = search;
     $("#user-search").oninput = filterUsers;
     $("#role-filter").onchange = filterUsers;
@@ -629,7 +642,22 @@
     const f = $("#account-form");
     f.dataset.mode = item.id ? "menu-edit" : "menu-create";
     f.dataset.id = item.id || "";
-    f.innerHTML = `<h2>${item.id ? "Sửa món" : "Thêm món"}</h2><div class="dialog-grid"><label class="span-2">Tên món<input name="name" required maxlength="120" value="${esc(item.name || "")}"></label><label>Danh mục<select name="categoryId" required>${categoryRows.map((c) => `<option value="${c.id}" ${item.categoryId === c.id ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label><label>Giá (₫)<input name="price" type="number" min="1" step="1" required value="${esc(item.price || "")}"></label><label>Thời gian chế biến (phút)<input name="prepTimeMinutes" type="number" min="1" value="${esc(item.prepTimeMinutes || "")}"></label><label>Ảnh (đường dẫn)<input name="imageUrl" value="${esc(item.imageUrl || "")}"></label><label class="span-2">Mô tả<textarea name="description" rows="3">${esc(item.description || "")}</textarea></label>${item.id ? `<label><input name="isAvailable" type="checkbox" ${item.isAvailable ? "checked" : ""}> Đang có món</label><label><input name="isVisible" type="checkbox" ${item.isVisible ? "checked" : ""}> Hiện trên thực đơn</label>` : ""}</div><div class="dialog-actions"><button type="button" class="secondary" data-close-account>Hủy</button><button class="primary">${item.id ? "Lưu món" : "Tạo món"}</button></div><p class="error" id="account-error"></p>`;
+    f.innerHTML = `<h2>${item.id ? "Sửa món" : "Thêm món"}</h2><div class="dialog-grid"><label class="span-2">Tên món<input name="name" required maxlength="120" value="${esc(item.name || "")}"></label><label>Danh mục<select name="categoryId" required>${categoryRows.filter(c => c.isActive || c.id === item.categoryId).map((c) => `<option value="${c.id}" ${item.categoryId === c.id ? "selected" : ""}>${esc(c.name)}${c.isActive ? "" : " (đang ẩn)"}</option>`).join("")}</select></label><label>Giá (₫)<input name="price" type="number" min="1" step="1" required value="${esc(item.price || "")}"></label><label>Thời gian chế biến (phút)<input name="prepTimeMinutes" type="number" min="1" value="${esc(item.prepTimeMinutes || "")}"></label><div class="span-2"><span class="field-label">Ảnh món ăn</span><label class="image-dropzone" tabindex="0"><strong>${item.imageUrl ? "Kéo ảnh mới vào đây để thay ảnh hiện tại" : "Kéo ảnh và thả vào đây"}</strong><span>hoặc bấm để chọn ảnh từ thiết bị</span><small>JPG, PNG, WEBP hoặc GIF · tối đa 5 MB</small><input class="image-drop-target" name="imageFile" type="file" accept="image/jpeg,image/png,image/webp,image/gif" aria-label="Chọn ảnh món ăn"></label><img name="imagePreview" class="menu-preview" src="${esc(item.imageUrl || "")}" ${item.imageUrl ? "" : "hidden"} alt="Xem trước ảnh món"></div><label class="span-2">Mô tả<textarea name="description" rows="3">${esc(item.description || "")}</textarea></label>${item.id ? `<label><input name="isAvailable" type="checkbox" ${item.isAvailable ? "checked" : ""}> Đang có món</label><label><input name="isVisible" type="checkbox" ${item.isVisible ? "checked" : ""}> Hiện trên thực đơn</label>` : ""}</div><div class="dialog-actions"><button type="button" class="secondary" data-close-account>Hủy</button><button class="primary">${item.id ? "Lưu món" : "Tạo món"}</button></div><p class="error" id="account-error"></p>`;
+    const dropInput = f.elements.imageFile, dropzone = $(".image-dropzone", f);
+    const chooseImage = (file) => {
+      if (!file) return;
+      if (!file.type.startsWith("image/") || file.size > 5 * 1024 * 1024) { $("#account-error").textContent = "Chọn ảnh JPG, PNG, WEBP hoặc GIF có dung lượng tối đa 5 MB."; return; }
+      const transfer = new DataTransfer(); transfer.items.add(file); dropInput.files = transfer.files;
+      const preview = f.elements.imagePreview;
+      if (preview.dataset.objectUrl) URL.revokeObjectURL(preview.dataset.objectUrl);
+      preview.dataset.objectUrl = URL.createObjectURL(file); preview.src = preview.dataset.objectUrl; preview.hidden = false;
+      dropzone.querySelector("strong").textContent = file.name; $("#account-error").textContent = "";
+    };
+    dropInput.addEventListener("change", () => chooseImage(dropInput.files[0]));
+    for (const eventName of ["dragenter", "dragover"]) dropzone.addEventListener(eventName, e => { e.preventDefault(); dropzone.classList.add("dragging"); });
+    for (const eventName of ["dragleave", "drop"]) dropzone.addEventListener(eventName, e => { e.preventDefault(); dropzone.classList.remove("dragging"); });
+    dropzone.addEventListener("drop", e => chooseImage(e.dataTransfer.files[0]));
+    dropzone.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); dropInput.click(); } });
     $("#account-dialog").showModal();
   }
   async function submitMenuForm(e) {
@@ -645,16 +673,17 @@
       };
     if (fd.get("prepTimeMinutes"))
       body.prepTimeMinutes = Number(fd.get("prepTimeMinutes"));
-    if (fd.get("imageUrl")) body.imageUrl = String(fd.get("imageUrl")).trim();
     if (edit) {
       body.isAvailable = f.elements.isAvailable.checked;
       body.isVisible = f.elements.isVisible.checked;
     }
     try {
-      await api(edit ? `/menu/items/${f.dataset.id}` : "/menu/items", {
+      const saved = await api(edit ? `/menu/items/${f.dataset.id}` : "/menu/items", {
         method: edit ? "PATCH" : "POST",
         body: JSON.stringify(body),
       });
+      const imageFile = fd.get("imageFile");
+      if (imageFile?.size) { const upload = new FormData(); upload.append("file", imageFile); await api(`/menu/items/${saved.id || f.dataset.id}/image`, { method: "POST", body: upload }); }
       $("#account-dialog").close();
       toast(edit ? "Đã lưu món" : "Đã thêm món");
       await load();
@@ -783,6 +812,13 @@
       try { await showTableQr(Number(tableQr.dataset.tableQr)); } catch (err) { toast(err.message); }
       return;
     }
+    const tableDelete = e.target.closest("[data-table-delete]");
+    if (tableDelete) {
+      if (!confirm(`Xóa bàn ${tableDelete.dataset.tableCode}? Bàn đã có lịch sử sẽ được ngừng hoạt động để giữ báo cáo.`)) return;
+      try { await api(`/admin/tables/${tableDelete.dataset.tableDelete}`, { method: "DELETE" }); toast("Đã xóa bàn khỏi sơ đồ"); await load(); }
+      catch (err) { toast(err.message); }
+      return;
+    }
     const billSession = e.target.closest("[data-bill-session]");
     if (billSession) return openBill(Number(billSession.dataset.billSession));
     const billPay = e.target.closest("[data-bill-pay]");
@@ -795,6 +831,12 @@
         return openUserForm("create", { branchId: me?.branchId });
       if (action === "edit") return openUserForm("edit", user);
       if (action === "password") return resetUserPassword(user);
+      if (action === "archive") {
+        if (!confirm(`Xóa tài khoản ${user.fullName} khỏi danh sách? Hồ sơ vẫn được giữ để bảo toàn lịch sử.`)) return;
+        try { await api(`/admin/users/${user.id}`, { method: "DELETE" }); toast("Đã xóa tài khoản khỏi danh sách"); await load(); }
+        catch (err) { toast(err.message); }
+        return;
+      }
       if (action === "lock" || action === "unlock") {
         if (action === "lock" && !confirm(`Khóa tài khoản ${user.fullName}?`))
           return;
@@ -835,11 +877,37 @@
   });
   document.addEventListener("click", async (e) => {
     const b = e.target.closest(
-      "[data-menu-new],[data-menu-edit],[data-menu-delete],[data-reservation-new],[data-reservation-complete],[data-reservation-reject],[data-priority]",
+      "[data-menu-new],[data-menu-edit],[data-menu-delete],[data-category-new],[data-category-edit],[data-category-visibility],[data-category-delete],[data-reservation-new],[data-reservation-complete],[data-reservation-reject],[data-reservation-delete],[data-order-delete],[data-priority]",
     );
     if (!b) return;
     try {
-      if (b.hasAttribute("data-menu-new")) openMenuForm();
+      if (b.hasAttribute("data-category-new")) {
+        const name = prompt("Tên danh mục mới?");
+        if (!name?.trim()) return;
+        await api("/menu/categories", { method: "POST", body: JSON.stringify({ name: name.trim() }) });
+        toast("Đã thêm danh mục"); await load();
+      } else if (b.hasAttribute("data-category-edit")) {
+        const category = categoryRows.find(c => String(c.id) === b.dataset.categoryEdit);
+        const name = prompt("Tên danh mục", category?.name || "");
+        if (!name?.trim() || name.trim() === category?.name) return;
+        await api(`/menu/categories/${b.dataset.categoryEdit}`, { method: "PATCH", body: JSON.stringify({ name: name.trim() }) });
+        toast("Đã sửa danh mục"); await load();
+      } else if (b.hasAttribute("data-category-visibility")) {
+        await api(`/menu/categories/${b.dataset.categoryVisibility}`, { method: "PATCH", body: JSON.stringify({ isActive: b.dataset.active !== "true" }) });
+        toast("Đã cập nhật danh mục"); await load();
+      } else if (b.hasAttribute("data-category-delete")) {
+        if (!confirm("Xóa danh mục này? Danh mục phải không còn món đang hoạt động.")) return;
+        await api(`/menu/categories/${b.dataset.categoryDelete}`, { method: "DELETE" });
+        toast("Đã xóa danh mục"); await load();
+      } else if (b.hasAttribute("data-reservation-delete")) {
+        if (!confirm("Xóa lịch cũ khỏi danh sách quản trị? Hồ sơ vẫn được giữ để bảo toàn lịch sử và thanh toán.")) return;
+        await api(`/reservations/${b.dataset.reservationDelete}`, { method: "DELETE" });
+        toast("Đã xóa lịch khỏi danh sách"); await load();
+      } else if (b.hasAttribute("data-order-delete")) {
+        if (!confirm("Xóa đơn đã hoàn tất khỏi danh sách? Dữ liệu vẫn được giữ cho hóa đơn và báo cáo.")) return;
+        await api(`/orders/${b.dataset.orderDelete}`, { method: "DELETE" });
+        toast("Đã xóa đơn khỏi danh sách"); await load();
+      } else if (b.hasAttribute("data-menu-new")) openMenuForm();
       else if (b.hasAttribute("data-menu-edit"))
         openMenuForm(menuRows.find((x) => String(x.id) === b.dataset.menuEdit));
       else if (b.hasAttribute("data-menu-delete")) {
@@ -918,6 +986,7 @@
       localStorage.setItem("bn_refresh", data.refreshToken);
       me = data.user || null;
       connectRealtime();
+      unlockScreen();
       dlg.close();
       location.hash = roleHome[me?.role?.code || me?.roleCode] || "dashboard";
       await load();
@@ -925,7 +994,9 @@
       $("#login-error").textContent = err.message;
     }
   });
+  dlg.addEventListener("cancel", (e) => e.preventDefault());
   $("#logout").onclick = async () => {
+    lockScreen();
     try {
       if (token) await api("/auth/logout", { method: "POST" });
     } catch {
@@ -936,6 +1007,7 @@
     realtimeSocket?.disconnect();
     realtimeSocket = null;
     responseCache.clear();
+    $("#login-error").textContent = "";
     localStorage.removeItem("bn_access");
     localStorage.removeItem("bn_refresh");
     dlg.showModal();
@@ -957,22 +1029,26 @@
     responseCache.clear();
     if (!token) {
       me = null;
+      lockScreen();
       realtimeSocket?.disconnect();
       realtimeSocket = null;
       if (!dlg.open) dlg.showModal();
       return;
     }
-    api("/auth/me").then((user) => { me = user; connectRealtime(); load(); }).catch(() => {});
+    lockScreen();
+    api("/auth/me").then((user) => { me = user; connectRealtime(); unlockScreen(); load(); }).catch(() => {});
   });
   if (token)
     api("/auth/me")
       .then((x) => {
         me = x;
         connectRealtime();
+        unlockScreen();
         load();
       })
       .catch(() => {
         token = null;
+        lockScreen();
         localStorage.removeItem("bn_access");
         localStorage.removeItem("bn_refresh");
         dlg.showModal();

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { PERMISSIONS } from '../common/constants/permissions';
 import { CurrentUser, Public, RequirePermissions } from '../common/decorators';
@@ -102,6 +102,12 @@ export class ReservationsController {
   @RequirePermissions(PERMISSIONS.RESERVATION_VIEW)
   list(@CurrentUser() user: AuthUser, @Query() q: ListReservationsQueryDto) {
     return this.reservations.list(user, q);
+  }
+
+  @Delete(':id')
+  @RequirePermissions(PERMISSIONS.RESERVATION_MANAGE)
+  archive(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number) {
+    return this.reservations.archive(user, id);
   }
 
   /** Nhân viên đặt bàn hộ (khách gọi điện) */

@@ -18,7 +18,7 @@ export class CustomersController {
 
   @Get('reservations')
   async reservations(@CurrentUser() user: AuthUser, @Query() q: PaginationQueryDto) {
-    const where = { OR: [{ customerId: user.id }, ...(user.phone ? [{ customerPhone: user.phone }] : [])] };
+    const where = { archivedAt: null, OR: [{ customerId: user.id }, ...(user.phone ? [{ customerPhone: user.phone }] : [])] };
     const [items, total] = await Promise.all([
       this.prisma.reservation.findMany({
         where,
@@ -40,7 +40,7 @@ export class CustomersController {
         include: {
           branch: { select: { id: true, name: true } },
           table: { select: { code: true } },
-          orders: { include: { items: true }, orderBy: { createdAt: 'asc' } },
+          orders: { where: { archivedAt: null }, include: { items: true }, orderBy: { createdAt: 'desc' } },
           bills: {
             where: { parentBillId: null, status: { in: ['PAID', 'REFUNDED'] } },
             select: { id: true, code: true, total: true, paidAt: true, pointsEarned: true, feedback: { select: { rating: true } } },

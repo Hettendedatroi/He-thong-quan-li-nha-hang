@@ -28,6 +28,11 @@ export class AdminUsersController {
     return this.users.list(q);
   }
 
+  @Delete(':id')
+  archive(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number) {
+    return this.users.archive(user, id);
+  }
+
   /** FR-ADM-01: tạo tài khoản Quản lý / Bếp / Phục vụ */
   @Post()
   create(@CurrentUser() user: AuthUser, @Body() dto: CreateUserDto) {

@@ -27,6 +27,7 @@ export class UsersService {
 
   async list(q: ListUsersQueryDto) {
     const where: Prisma.UserWhereInput = {
+      archivedAt: null,
       AND: [
         q.roleCode ? { role: { code: q.roleCode } } : {},
         q.staffOnly ? { role: { code: { not: ROLE_CODES.CUSTOMER } } } : {},
@@ -63,8 +64,21 @@ export class UsersService {
 
   async get(id: number) {
     const user = await this.prisma.user.findUnique({ where: { id }, include: { role: true, branch: true } });
-    if (!user) throw new NotFoundException('Không tìm thấy tài khoản');
+    if (!user || user.archivedAt) throw new NotFoundException('Không tìm thấy tài khoản');
     return { ...toPublicUser(user), branch: user.branch };
+  }
+
+  async archive(actor: AuthUser, id: number) {
+    if (actor.id === id) throw new BadRequestException('Không thể xóa tài khoản của chính mình');
+    await this.assertCanManageUser(actor, id);
+    const user = await this.prisma.user.findUnique({ where: { id }, include: { role: true } });
+    if (!user || user.archivedAt) throw new NotFoundException('Không tìm thấy tài khoản');
+    if (user.status !== 'LOCKED') throw new BadRequestException('Hãy khóa tài khoản trước khi xóa khỏi danh sách');
+    const archivedAt = new Date();
+    await this.prisma.user.update({ where: { id }, data: { archivedAt } });
+    await this.revokeAllSessions(id);
+    await this.audit.log({ userId: actor.id, action: 'user.archive', entity: 'User', entityId: id });
+    return { ok: true, archivedAt };
   }
 
   /** US-18 AC1: tài khoản nhân viên cần họ tên, tên đăng nhập duy nhất, vai trò, mật khẩu ban đầu */
@@ -100,7 +114,7 @@ export class UsersService {
 
   async update(actor: AuthUser, id: number, dto: UpdateUserDto) {
     const before = await this.prisma.user.findUnique({ where: { id }, include: { role: true } });
-    if (!before) throw new NotFoundException('Không tìm thấy tài khoản');
+    if (!before || before.archivedAt) throw new NotFoundException('Không tìm thấy tài khoản');
     this.assertCanGrant(actor, before.role);
     const email = dto.email?.toLowerCase();
     const phone = dto.phone ? normalizePhone(dto.phone) : undefined;
@@ -234,7 +248,7 @@ export class UsersService {
 
   private async assertCanManageUser(actor: AuthUser, id: number) {
     const target = await this.prisma.user.findUnique({ where: { id }, include: { role: true } });
-    if (!target) throw new NotFoundException('Không tìm thấy tài khoản');
+    if (!target || target.archivedAt) throw new NotFoundException('Không tìm thấy tài khoản');
     this.assertCanGrant(actor, target.role);
   }
 
