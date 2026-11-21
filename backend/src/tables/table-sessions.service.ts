@@ -378,16 +378,16 @@ export class TableSessionsService {
     return { from: await this.detail({ id: sessionId }), to: await this.detail({ id: target.id }) };
   }
 
-  /** Đóng phiên sau khi thanh toán xong: bàn được trả về Trống ngay, đặt bàn -> hoàn tất */
+  /** Đóng phiên sau thanh toán: bàn chuyển sang Đang dọn dẹp, đặt bàn -> hoàn tất */
   async close(sessionId: number) {
     const session = await this.prisma.tableSession.findUnique({ where: { id: sessionId } });
     if (!session || session.status === 'CLOSED') return;
     await this.prisma.$transaction([
       this.prisma.tableSession.update({ where: { id: sessionId }, data: { status: 'CLOSED', closedAt: new Date() } }),
-      this.prisma.diningTable.update({ where: { id: session.tableId }, data: { status: 'AVAILABLE' } }),
+      this.prisma.diningTable.update({ where: { id: session.tableId }, data: { status: 'CLEANING' } }),
       this.prisma.diningTable.updateMany({
         where: { mergedIntoId: session.tableId },
-        data: { mergedIntoId: null, status: 'AVAILABLE' },
+        data: { mergedIntoId: null, status: 'CLEANING' },
       }),
       this.prisma.cartItem.deleteMany({ where: { sessionId } }),
       ...(session.reservationId
